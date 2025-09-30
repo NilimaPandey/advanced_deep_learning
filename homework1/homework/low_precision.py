@@ -1,109 +1,93 @@
 from pathlib import Path
 import torch
 from .bignet import BIGNET_DIM, LayerNorm
+from .low_precision import Linear4Bit
 
 
-def block_quantize_4bit(x: torch.Tensor, group_size: int = 16):
-    assert x.dim() == 1
-    assert x.size(0) % group_size == 0
-    x = x.view(-1, group_size)
-    normalization = x.abs().max(dim=-1, keepdim=True).values
-    x_norm = (x + normalization) / (2 * normalization + 1e-8)
-    x_quant_8 = (x_norm * 15).round().to(torch.int8)
-    x_quant_4 = (x_quant_8[:, ::2] & 0xF) + ((x_quant_8[:, 1::2] & 0xF) << 4)
-    return x_quant_4, normalization.to(torch.float16)
+class QLoRALinear(Linear4Bit):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        lora_dim: int,
+        group_size: int = 16,
+        bias: bool = True,
+    ) -> None:
+        super().__init__(in_features, out_features, bias, group_size)
 
+        # Freeze quantized base
+        self.requires_grad_(False)
 
-def block_dequantize_4bit(x_quant_4: torch.Tensor, normalization: torch.Tensor) -> torch.Tensor:
-    assert x_quant_4.dim() == 2
-    normalization = normalization.to(torch.float32)
-    x_quant_8 = x_quant_4.new_empty(x_quant_4.size(0), x_quant_4.shape[1] * 2)
-    x_quant_8[:, ::2] = x_quant_4 & 0xF
-    x_quant_8[:, 1::2] = (x_quant_4 >> 4) & 0xF
-    x_norm = x_quant_8.to(torch.float32) / 15
-    x = (x_norm * 2 * normalization) - normalization
-    return x.view(-1)
+        # LoRA adapters (trainable, float32)
+        self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
+        self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
 
-
-class Linear4Bit(torch.nn.Module):
-    def __init__(self, in_features: int, out_features: int, bias: bool = True, group_size: int = 16) -> None:
-        super().__init__()
-        self._shape = (out_features, in_features)
-        self._group_size = group_size
-
-        # Buffers for quantized and dequantized weights
-        self.register_buffer("weight_q4", torch.zeros(1, 1, dtype=torch.int8), persistent=False)
-        self.register_buffer("weight_norm", torch.zeros(1, 1, dtype=torch.float16), persistent=False)
-        self.register_buffer("weight_fp32", torch.zeros(out_features, in_features, dtype=torch.float32), persistent=False)
-
-        # Optional bias
-        self.bias = None
-        if bias:
-            self.bias = torch.nn.Parameter(torch.zeros(out_features, dtype=torch.float32))
-
-        # Hook to quantize checkpoint weights on load
-        self._register_load_state_dict_pre_hook(Linear4Bit._load_state_dict_pre_hook, with_module=True)
-
-    def _load_state_dict_pre_hook(
-        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-    ):
-        if f"{prefix}weight" in state_dict:
-            weight = state_dict[f"{prefix}weight"]
-            del state_dict[f"{prefix}weight"]
-
-            out_features, in_features = self._shape
-            rows_q4, rows_norm, rows_deq = [], [], []
-            for row in weight:
-                q4, norm = block_quantize_4bit(row, self._group_size)
-                rows_q4.append(q4)
-                rows_norm.append(norm)
-                rows_deq.append(block_dequantize_4bit(q4, norm))
-
-            self.weight_q4 = torch.cat(rows_q4, dim=0)
-            self.weight_norm = torch.cat(rows_norm, dim=0)
-            self.weight_fp32 = torch.stack(rows_deq, dim=0).to(torch.float32)
+        # Careful init
+        torch.nn.init.normal_(self.lora_A.weight, std=1e-4)
+        torch.nn.init.zeros_(self.lora_B.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return torch.nn.functional.linear(x.to(torch.float32), self.weight_fp32, self.bias)
+        # --- Base forward: dequantize vectorized ---
+        xq = self.weight_q4
+        norms = self.weight_norm.to(torch.float32)
+        out_features, in_features = self._shape
+        blocks = in_features // self._group_size
+
+        # unpack 4-bit to 8-bit
+        q8 = torch.empty(xq.size(0), xq.size(1) * 2, dtype=torch.int8, device=xq.device)
+        q8[:, ::2] = xq & 0xF
+        q8[:, 1::2] = (xq >> 4) & 0xF
+
+        # normalize [0,1], rescale
+        q8 = q8.to(torch.float32) / 15.0
+        norms = norms.expand(-1, -1, self._group_size).reshape(xq.size(0), -1)
+        W = (q8 * 2 * norms) - norms
+
+        base_out = torch.nn.functional.linear(x.to(torch.float32), W, self.bias)
+
+        # --- LoRA adapters ---
+        lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
+
+        return (base_out + lora_out).to(x.dtype)
 
 
-class BigNet4Bit(torch.nn.Module):
+class QLoRABigNet(torch.nn.Module):
     class Block(torch.nn.Module):
-        def __init__(self, channels):
+        def __init__(self, channels, lora_dim, group_size):
             super().__init__()
             self.model = torch.nn.Sequential(
-                Linear4Bit(channels, channels),
+                QLoRALinear(channels, channels, lora_dim, group_size),
                 torch.nn.ReLU(),
-                Linear4Bit(channels, channels),
+                QLoRALinear(channels, channels, lora_dim, group_size),
                 torch.nn.ReLU(),
-                Linear4Bit(channels, channels),
+                QLoRALinear(channels, channels, lora_dim, group_size),
             )
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
             return self.model(x) + x
 
-    def __init__(self):
+    def __init__(self, lora_dim: int = 32, group_size: int = 16):
         super().__init__()
         self.model = torch.nn.Sequential(
-            self.Block(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim, group_size),
             LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim, group_size),
             LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim, group_size),
             LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim, group_size),
             LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim, group_size),
             LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim, group_size),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
 
-def load(path: Path | None) -> BigNet4Bit:
-    net = BigNet4Bit()
+def load(path: Path | None) -> QLoRABigNet:
+    net = QLoRABigNet()
     if path is not None:
-        net.load_state_dict(torch.load(path, weights_only=True))
+        net.load_state_dict(torch.load(path, weights_only=True), strict=False)
     return net
