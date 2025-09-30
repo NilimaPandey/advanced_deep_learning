@@ -17,7 +17,7 @@ def block_quantize_4bit(x: torch.Tensor, group_size: int = 32):
 
 class LinearRowShared4Bit(torch.nn.Module):
     def __init__(self, in_features: int, out_features: int, bias: bool = True, group_size: int = 32,
-                 share_rows: int = 16):
+                 share_rows: int = 32):
         super().__init__()
         self._shape = (out_features, in_features)
         self._group_size = group_size
@@ -70,12 +70,16 @@ class LinearRowShared4Bit(torch.nn.Module):
             self.weight_norm = torch.cat(all_shared_norms, dim=0)
 
     def forward(self, x: torch.Tensor):
+        # Move buffers to same device as input FIRST
+        weight_q4 = self.weight_q4.to(x.device)
+        weight_norm = self.weight_norm.to(x.device)
+
         # Unpack 4-bit values
-        low = self.weight_q4 & 0xF
-        high = (self.weight_q4 >> 4) & 0xF
+        low = weight_q4 & 0xF
+        high = (weight_q4 >> 4) & 0xF
         q8 = torch.stack((low, high), dim=-1).reshape(
-            self.weight_q4.size(0),
-            self.weight_q4.size(1),
+            weight_q4.size(0),
+            weight_q4.size(1),
             self._group_size
         )
 
@@ -83,19 +87,18 @@ class LinearRowShared4Bit(torch.nn.Module):
         q8 = q8.to(torch.float32) / 15.0
 
         # Expand shared norms back to full row count
-        norms = self.weight_norm.to(torch.float32)
-        norms = norms.repeat_interleave(self._share_rows, dim=0)[:self.weight_q4.size(0)]
+        norms = weight_norm.to(torch.float32)
+        norms = norms.repeat_interleave(self._share_rows, dim=0)[:weight_q4.size(0)]
         norms = norms.expand(-1, -1, self._group_size)
 
-        W = (q8 * 2 * norms - norms).reshape(self.weight_q4.size(0), -1).detach()
-        W = W.to(x.device)
+        W = (q8 * 2 * norms - norms).reshape(weight_q4.size(0), -1)
 
         return torch.nn.functional.linear(x.to(torch.float32), W, self.bias)
 
 
 class BigNetRowShared4Bit(torch.nn.Module):
     class Block(torch.nn.Module):
-        def __init__(self, channels, group_size=32, share_rows=16):
+        def __init__(self, channels, group_size=32, share_rows=32):
             super().__init__()
             self.model = torch.nn.Sequential(
                 LinearRowShared4Bit(channels, channels, group_size=group_size, share_rows=share_rows),
@@ -108,7 +111,7 @@ class BigNetRowShared4Bit(torch.nn.Module):
         def forward(self, x):
             return self.model(x) + x
 
-    def __init__(self, group_size=32, share_rows=16):
+    def __init__(self, group_size=32, share_rows=32):
         super().__init__()
         from .bignet import BIGNET_DIM, LayerNorm
         self.model = torch.nn.Sequential(

@@ -29,11 +29,11 @@ class QLoRALinear(torch.nn.Module):
                                                   [])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Base output (no gradients)
+        # Base output (no gradients) - keep in float32
         base_out = self.base(x)
         # LoRA output (has gradients)
         lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
-        return base_out + lora_out.to(base_out.dtype)
+        return base_out + lora_out
 
 
 class QLoRABigNet(torch.nn.Module):
