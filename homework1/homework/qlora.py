@@ -1,7 +1,7 @@
 from pathlib import Path
 import torch
 from .bignet import BIGNET_DIM, LayerNorm
-from .low_precision import Linear4Bit, block_dequantize_4bit
+from .low_precision import Linear4Bit
 
 
 class QLoRALinear(Linear4Bit):
@@ -15,33 +15,23 @@ class QLoRALinear(Linear4Bit):
     ) -> None:
         super().__init__(in_features, out_features, bias, group_size)
 
-        # Freeze base quantized weights
+        # Freeze quantized weights
         self.requires_grad_(False)
 
         # LoRA adapters (trainable, float32)
         self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
         self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
 
-        # Scaling factor
-        self.scaling = 1.0 / lora_dim
+        # Careful init to keep close to baseline
+        torch.nn.init.normal_(self.lora_A.weight, std=1e-4)
+        torch.nn.init.zeros_(self.lora_B.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Base forward (dequantize + matmul)
-        with torch.no_grad():
-            out_features, in_features = self._shape
-            W = []
-            for i in range(out_features):
-                start = i * (in_features // self._group_size)
-                end = (i + 1) * (in_features // self._group_size)
-                row_q4 = self.weight_q4[start:end]
-                row_norm = self.weight_norm[start:end]
-                row = block_dequantize_4bit(row_q4, row_norm)
-                W.append(row)
-            W = torch.stack(W, dim=0)
-            base_out = torch.nn.functional.linear(x.to(torch.float32), W, self.bias)
+        # Base forward (fast dequantized weight_fp32)
+        base_out = torch.nn.functional.linear(x.to(torch.float32), self.weight_fp32, self.bias)
 
-        # LoRA adapters (trainable)
-        lora_out = self.lora_B(self.lora_A(x.to(torch.float32))) * self.scaling
+        # LoRA adapters
+        lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
 
         return (base_out + lora_out).to(x.dtype)
 

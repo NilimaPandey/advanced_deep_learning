@@ -3,10 +3,9 @@ import torch
 from .bignet import BIGNET_DIM, LayerNorm
 
 
-def block_quantize_4bit(x: torch.Tensor, group_size: int = 16) -> tuple[torch.Tensor, torch.Tensor]:
+def block_quantize_4bit(x: torch.Tensor, group_size: int = 16):
     assert x.dim() == 1
     assert x.size(0) % group_size == 0
-
     x = x.view(-1, group_size)
     normalization = x.abs().max(dim=-1, keepdim=True).values
     x_norm = (x + normalization) / (2 * normalization + 1e-8)
@@ -32,24 +31,14 @@ class Linear4Bit(torch.nn.Module):
         self._shape = (out_features, in_features)
         self._group_size = group_size
 
-        # Buffers for quantized weights
-        self.register_buffer(
-            "weight_q4",
-            torch.zeros(out_features * in_features // group_size, group_size // 2, dtype=torch.int8),
-            persistent=False,
-        )
-        self.register_buffer(
-            "weight_norm",
-            torch.zeros(out_features * in_features // group_size, 1, dtype=torch.float16),
-            persistent=False,
-        )
+        self.register_buffer("weight_q4", None, persistent=False)
+        self.register_buffer("weight_norm", None, persistent=False)
+        self.register_buffer("weight_fp32", None, persistent=False)  # dequantized
 
-        # Optional bias
         self.bias = None
         if bias:
             self.bias = torch.nn.Parameter(torch.zeros(out_features, dtype=torch.float32))
 
-        # Hook to intercept weight loading
         self._register_load_state_dict_pre_hook(Linear4Bit._load_state_dict_pre_hook, with_module=True)
 
     def _load_state_dict_pre_hook(
@@ -59,35 +48,20 @@ class Linear4Bit(torch.nn.Module):
             weight = state_dict[f"{prefix}weight"]
             del state_dict[f"{prefix}weight"]
 
-            # Flatten weights row by row
             out_features, in_features = self._shape
-            weight_flat = weight.reshape(-1)
-
-            # Quantize row by row
-            q4_list, norm_list = [], []
+            rows_q4, rows_norm, rows_deq = [], [], []
             for row in weight:
                 q4, norm = block_quantize_4bit(row, self._group_size)
-                q4_list.append(q4)
-                norm_list.append(norm)
+                rows_q4.append(q4)
+                rows_norm.append(norm)
+                rows_deq.append(block_dequantize_4bit(q4, norm))
 
-            self.weight_q4 = torch.cat(q4_list, dim=0)
-            self.weight_norm = torch.cat(norm_list, dim=0)
+            self.weight_q4 = torch.cat(rows_q4, dim=0)
+            self.weight_norm = torch.cat(rows_norm, dim=0)
+            self.weight_fp32 = torch.stack(rows_deq, dim=0).to(torch.float32)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        with torch.no_grad():
-            # Dequantize back to float32
-            out_features, in_features = self._shape
-            W = []
-            for i in range(out_features):
-                start = i * (in_features // self._group_size)
-                end = (i + 1) * (in_features // self._group_size)
-                row_q4 = self.weight_q4[start:end]
-                row_norm = self.weight_norm[start:end]
-                row = block_dequantize_4bit(row_q4, row_norm)
-                W.append(row)
-            W = torch.stack(W, dim=0)
-
-            return torch.nn.functional.linear(x.to(torch.float32), W, self.bias)
+        return torch.nn.functional.linear(x.to(torch.float32), self.weight_fp32, self.bias)
 
 
 class BigNet4Bit(torch.nn.Module):
