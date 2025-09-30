@@ -1,18 +1,11 @@
 from pathlib import Path
 import torch
-from .bignet import BIGNET_DIM, LayerNorm
 
 
 def ternary_quantize(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """
-    Quantize tensor to ternary {-1, 0, 1} with scaling factor.
-    Returns:
-      q: int8 tensor with values in {-1,0,1}
-      scale: scaling factor (float16)
-    """
     scale = x.abs().mean()
     q = torch.sign(x / (scale + 1e-8))
-    q[q == -0] = 0  # clean up -0
+    q[q == -0] = 0
     return q.to(torch.int8), scale.to(torch.float16)
 
 
@@ -25,16 +18,13 @@ class TernaryLinear(torch.nn.Module):
         super().__init__()
         self._shape = (out_features, in_features)
 
-        # Buffers to hold quantized weights
         self.register_buffer("weight_q", None, persistent=False)
         self.register_buffer("weight_scale", None, persistent=False)
 
-        # Bias in float32
         self.bias = None
         if bias:
             self.bias = torch.nn.Parameter(torch.zeros(out_features, dtype=torch.float32))
 
-        # Hook for checkpoint loading
         self._register_load_state_dict_pre_hook(TernaryLinear._load_state_dict_pre_hook, with_module=True)
 
     def _load_state_dict_pre_hook(
@@ -49,8 +39,9 @@ class TernaryLinear(torch.nn.Module):
                 q, s = ternary_quantize(row)
                 q_list.append(q.unsqueeze(0))
                 s_list.append(s.unsqueeze(0))
-            self.weight_q = torch.cat(q_list, dim=0)         # [out_features, in_features]
-            self.weight_scale = torch.cat(s_list, dim=0)     # [out_features]
+
+            self.weight_q = torch.cat(q_list, dim=0)
+            self.weight_scale = torch.cat(s_list, dim=0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         W = ternary_dequantize(self.weight_q, self.weight_scale.unsqueeze(1))
@@ -74,6 +65,9 @@ class BigNetTernary(torch.nn.Module):
 
     def __init__(self):
         super().__init__()
+        # Lazy imports to avoid circular dependencies
+        from .bignet import BIGNET_DIM, LayerNorm
+
         self.model = torch.nn.Sequential(
             self.Block(BIGNET_DIM),
             LayerNorm(BIGNET_DIM),

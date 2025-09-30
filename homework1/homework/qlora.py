@@ -4,38 +4,27 @@ from .bignet import BIGNET_DIM, LayerNorm
 
 
 class QLoRALinear(torch.nn.Module):
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        lora_dim: int,
-        group_size: int = 16,
-        bias: bool = True,
-    ) -> None:
+    def __init__(self, base_layer: torch.nn.Module, lora_dim: int):
         super().__init__()
 
-        # Import Linear4Bit lazily here to avoid circular import
-        from .low_precision import Linear4Bit
-
-        # Base quantized linear (frozen)
-        self.base = Linear4Bit(in_features, out_features, bias, group_size)
+        # Frozen quantized base layer
+        self.base = base_layer
         self.base.requires_grad_(False)
+
+        in_features = base_layer._shape[1]
+        out_features = base_layer._shape[0]
 
         # LoRA adapters (trainable, float32)
         self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
         self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
 
-        # Careful init so model output ≈ baseline before training
+        # Careful init
         torch.nn.init.normal_(self.lora_A.weight, std=1e-4)
         torch.nn.init.zeros_(self.lora_B.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Base forward from quantized weights
         base_out = self.base(x)
-
-        # LoRA adapters
         lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
-
         return (base_out + lora_out).to(x.dtype)
 
 
@@ -43,12 +32,15 @@ class QLoRABigNet(torch.nn.Module):
     class Block(torch.nn.Module):
         def __init__(self, channels, lora_dim, group_size):
             super().__init__()
+            # Import Linear4Bit locally (only here, avoids circular import in QLoRALinear)
+            from .low_precision import Linear4Bit
+
             self.model = torch.nn.Sequential(
-                QLoRALinear(channels, channels, lora_dim, group_size),
+                QLoRALinear(Linear4Bit(channels, channels, True, group_size), lora_dim),
                 torch.nn.ReLU(),
-                QLoRALinear(channels, channels, lora_dim, group_size),
+                QLoRALinear(Linear4Bit(channels, channels, True, group_size), lora_dim),
                 torch.nn.ReLU(),
-                QLoRALinear(channels, channels, lora_dim, group_size),
+                QLoRALinear(Linear4Bit(channels, channels, True, group_size), lora_dim),
             )
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
