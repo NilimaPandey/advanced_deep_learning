@@ -27,8 +27,10 @@ class LinearRowShared4Bit(torch.nn.Module):
         self.register_buffer("weight_q4", torch.zeros(out_features, blocks, group_size // 2, dtype=torch.int8),
                              persistent=False)
 
-        # Store full norms, we'll share them during forward pass
-        self.register_buffer("weight_norm", torch.ones(out_features, blocks, 1, dtype=torch.float16), persistent=False)
+        # Reduced storage: one norm per share_rows instead of per row
+        num_shared_norms = (out_features + share_rows - 1) // share_rows
+        self.register_buffer("weight_norm", torch.ones(num_shared_norms, blocks, 1, dtype=torch.float16),
+                             persistent=False)
 
         self.bias = None
         if bias:
@@ -41,29 +43,49 @@ class LinearRowShared4Bit(torch.nn.Module):
             weight = state_dict[f"{prefix}weight"]
             del state_dict[f"{prefix}weight"]
 
-            q4_rows, norm_rows = [], []
-            for row in weight:
-                q4, norm = block_quantize_4bit(row, self._group_size)
-                q4_rows.append(q4.unsqueeze(0))
-                norm_rows.append(norm.unsqueeze(0))
+            all_q4 = []
+            all_shared_norms = []
 
-            self.weight_q4 = torch.cat(q4_rows, dim=0)
-            self.weight_norm = torch.cat(norm_rows, dim=0)
+            # Process weight matrix in chunks of share_rows
+            for row_start in range(0, weight.size(0), self._share_rows):
+                row_end = min(row_start + self._share_rows, weight.size(0))
+                row_chunk = weight[row_start:row_end]
+
+                # Quantize each row with full precision
+                chunk_q4 = []
+                chunk_norms = []
+                for row in row_chunk:
+                    q4, norm = block_quantize_4bit(row, self._group_size)
+                    chunk_q4.append(q4.unsqueeze(0))
+                    chunk_norms.append(norm.unsqueeze(0))
+
+                all_q4.extend(chunk_q4)
+
+                # Average norms across this chunk for storage
+                stacked_norms = torch.cat(chunk_norms, dim=0)  # [actual_rows, blocks, 1]
+                shared_norm = stacked_norms.mean(dim=0, keepdim=True)  # [1, blocks, 1]
+                all_shared_norms.append(shared_norm)
+
+            self.weight_q4 = torch.cat(all_q4, dim=0)
+            self.weight_norm = torch.cat(all_shared_norms, dim=0)
 
     def forward(self, x: torch.Tensor):
+        # Unpack 4-bit values
         low = self.weight_q4 & 0xF
         high = (self.weight_q4 >> 4) & 0xF
-        q8 = torch.stack((low, high), dim=-1).reshape(self.weight_q4.size(0), self.weight_q4.size(1), self._group_size)
+        q8 = torch.stack((low, high), dim=-1).reshape(
+            self.weight_q4.size(0),
+            self.weight_q4.size(1),
+            self._group_size
+        )
 
+        # Dequantize
         q8 = q8.to(torch.float32) / 15.0
 
-        # Share norms by averaging across groups of rows for computation
+        # Expand shared norms back to full row count
         norms = self.weight_norm.to(torch.float32)
-        shared_norms = []
-        for i in range(0, norms.size(0), self._share_rows):
-            group = norms[i:i + self._share_rows]
-            shared_norms.append(group.mean(0, keepdim=True).expand(group.size(0), -1, -1))
-        norms = torch.cat(shared_norms, dim=0).expand(-1, -1, self._group_size)
+        norms = norms.repeat_interleave(self._share_rows, dim=0)[:self.weight_q4.size(0)]
+        norms = norms.expand(-1, -1, self._group_size)
 
         W = (q8 * 2 * norms - norms).reshape(self.weight_q4.size(0), -1).detach()
         W = W.to(x.device)

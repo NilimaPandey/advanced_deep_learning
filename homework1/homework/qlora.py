@@ -10,10 +10,11 @@ class QLoRALinear(torch.nn.Module):
         self._shape = (out_features, in_features)
         self.base = Linear4Bit(in_features, out_features, bias, group_size)
 
+        # LoRA adapters - these ARE trainable
         self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
         self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
 
-        # Proper initialization: A with small normal, B with zeros
+        # Proper LoRA initialization
         torch.nn.init.normal_(self.lora_A.weight, std=1e-4)
         torch.nn.init.zeros_(self.lora_B.weight)
 
@@ -28,9 +29,11 @@ class QLoRALinear(torch.nn.Module):
                                                   [])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        base_out = self.base(x).to(torch.float32)
+        # Base output (no gradients)
+        base_out = self.base(x)
+        # LoRA output (has gradients)
         lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
-        return (base_out + lora_out).to(x.dtype)
+        return base_out + lora_out.to(base_out.dtype)
 
 
 class QLoRABigNet(torch.nn.Module):
