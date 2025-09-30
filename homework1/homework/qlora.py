@@ -12,7 +12,9 @@ class QLoRALinear(torch.nn.Module):
 
         self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
         self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
-        torch.nn.init.zeros_(self.lora_A.weight)
+
+        # Proper initialization: A with small normal, B with zeros
+        torch.nn.init.normal_(self.lora_A.weight, std=1e-4)
         torch.nn.init.zeros_(self.lora_B.weight)
 
         self._register_load_state_dict_pre_hook(QLoRALinear._load_state_dict_pre_hook, with_module=True)
@@ -22,7 +24,8 @@ class QLoRALinear(torch.nn.Module):
         if f"{prefix}weight" in state_dict:
             weight = state_dict[f"{prefix}weight"]
             del state_dict[f"{prefix}weight"]
-            module.base._load_state_dict_pre_hook({f"{prefix}base.weight": weight}, f"{prefix}base.", {}, True, [], [], [])
+            module.base._load_state_dict_pre_hook({f"{prefix}base.weight": weight}, f"{prefix}base.", {}, True, [], [],
+                                                  [])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         base_out = self.base(x).to(torch.float32)

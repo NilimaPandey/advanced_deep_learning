@@ -16,17 +16,19 @@ def block_quantize_4bit(x: torch.Tensor, group_size: int = 32):
 
 
 class LinearRowShared4Bit(torch.nn.Module):
-    def __init__(self, in_features: int, out_features: int, bias: bool = True, group_size: int = 32, share_rows: int = 16):
+    def __init__(self, in_features: int, out_features: int, bias: bool = True, group_size: int = 32,
+                 share_rows: int = 16):
         super().__init__()
         self._shape = (out_features, in_features)
         self._group_size = group_size
         self._share_rows = share_rows
 
         blocks = in_features // group_size
-        self.register_buffer("weight_q4", torch.zeros(out_features, blocks, group_size // 2, dtype=torch.int8), persistent=False)
+        self.register_buffer("weight_q4", torch.zeros(out_features, blocks, group_size // 2, dtype=torch.int8),
+                             persistent=False)
 
-        # fewer scale rows = out_features // share_rows
-        self.register_buffer("weight_norm", torch.ones(out_features // share_rows, blocks, 1, dtype=torch.float16), persistent=False)
+        # Store full norms, we'll share them during forward pass
+        self.register_buffer("weight_norm", torch.ones(out_features, blocks, 1, dtype=torch.float16), persistent=False)
 
         self.bias = None
         if bias:
@@ -45,16 +47,8 @@ class LinearRowShared4Bit(torch.nn.Module):
                 q4_rows.append(q4.unsqueeze(0))
                 norm_rows.append(norm.unsqueeze(0))
 
-            q4_tensor = torch.cat(q4_rows, dim=0)
-            norm_tensor = torch.cat(norm_rows, dim=0)
-
-            self.weight_q4 = q4_tensor
-
-            # share norms across groups of rows
-            shared = []
-            for i in range(0, norm_tensor.size(0), self._share_rows):
-                shared.append(norm_tensor[i:i + self._share_rows].mean(0, keepdim=True))
-            self.weight_norm = torch.cat(shared, dim=0)
+            self.weight_q4 = torch.cat(q4_rows, dim=0)
+            self.weight_norm = torch.cat(norm_rows, dim=0)
 
     def forward(self, x: torch.Tensor):
         low = self.weight_q4 & 0xF
@@ -62,9 +56,14 @@ class LinearRowShared4Bit(torch.nn.Module):
         q8 = torch.stack((low, high), dim=-1).reshape(self.weight_q4.size(0), self.weight_q4.size(1), self._group_size)
 
         q8 = q8.to(torch.float32) / 15.0
-        # expand shared norms back to full size
-        expanded_norms = self.weight_norm.repeat_interleave(self._share_rows, dim=0)
-        norms = expanded_norms.to(torch.float32).expand(-1, -1, self._group_size)
+
+        # Share norms by averaging across groups of rows for computation
+        norms = self.weight_norm.to(torch.float32)
+        shared_norms = []
+        for i in range(0, norms.size(0), self._share_rows):
+            group = norms[i:i + self._share_rows]
+            shared_norms.append(group.mean(0, keepdim=True).expand(group.size(0), -1, -1))
+        norms = torch.cat(shared_norms, dim=0).expand(-1, -1, self._group_size)
 
         W = (q8 * 2 * norms - norms).reshape(self.weight_q4.size(0), -1).detach()
         W = W.to(x.device)
