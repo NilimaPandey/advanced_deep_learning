@@ -31,14 +31,17 @@ class Linear4Bit(torch.nn.Module):
         self._shape = (out_features, in_features)
         self._group_size = group_size
 
-        self.register_buffer("weight_q4", None, persistent=False)
-        self.register_buffer("weight_norm", None, persistent=False)
-        self.register_buffer("weight_fp32", None, persistent=False)  # dequantized
+        # Buffers for quantized and dequantized weights
+        self.register_buffer("weight_q4", torch.zeros(1, 1, dtype=torch.int8), persistent=False)
+        self.register_buffer("weight_norm", torch.zeros(1, 1, dtype=torch.float16), persistent=False)
+        self.register_buffer("weight_fp32", torch.zeros(out_features, in_features, dtype=torch.float32), persistent=False)
 
+        # Optional bias
         self.bias = None
         if bias:
             self.bias = torch.nn.Parameter(torch.zeros(out_features, dtype=torch.float32))
 
+        # Hook to quantize checkpoint weights on load
         self._register_load_state_dict_pre_hook(Linear4Bit._load_state_dict_pre_hook, with_module=True)
 
     def _load_state_dict_pre_hook(
