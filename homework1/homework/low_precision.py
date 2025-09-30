@@ -1,8 +1,6 @@
 from pathlib import Path
 import torch
 from .bignet import BIGNET_DIM, LayerNorm
-from .low_precision import Linear4Bit
-
 
 class QLoRALinear(Linear4Bit):
     def __init__(
