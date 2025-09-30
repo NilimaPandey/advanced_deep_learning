@@ -31,8 +31,17 @@ class Linear4Bit(torch.nn.Module):
         self._shape = (out_features, in_features)
         self._group_size = group_size
 
-        self.register_buffer("weight_q4", None, persistent=False)
-        self.register_buffer("weight_norm", None, persistent=False)
+        # Buffers start with dummy values instead of None
+        self.register_buffer(
+            "weight_q4",
+            torch.zeros(out_features, in_features // group_size, dtype=torch.int8),
+            persistent=False,
+        )
+        self.register_buffer(
+            "weight_norm",
+            torch.ones(out_features, in_features // group_size, dtype=torch.float16),
+            persistent=False,
+        )
 
         self.bias = None
         if bias:
