@@ -9,22 +9,22 @@ class QLoRALinear(torch.nn.Module):
         super().__init__()
         self._shape = (out_features, in_features)
 
-        # Base quantized linear (frozen, no grads)
+        # Base quantized linear (frozen)
         self.base = Linear4Bit(in_features, out_features, bias, group_size)
         self.base.requires_grad_(False)
 
-        # LoRA adapters (must remain trainable!)
+        # LoRA adapters (trainable, FP32)
         self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
         self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
 
-        # Zero init → model == BigNet4Bit before training
+        # Zero-init → ensures forward matches baseline at load
         torch.nn.init.zeros_(self.lora_A.weight)
         torch.nn.init.zeros_(self.lora_B.weight)
 
         self.lora_A.requires_grad_(True)
         self.lora_B.requires_grad_(True)
 
-        # Hook: route checkpoint weights into base Linear4Bit
+        # Hook: redirect checkpoint weights into the base Linear4Bit
         self._register_load_state_dict_pre_hook(QLoRALinear._load_state_dict_pre_hook, with_module=True)
 
     @staticmethod
@@ -37,11 +37,16 @@ class QLoRALinear(torch.nn.Module):
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Base in quantized FP32
-        base_out = self.base(x)
-        # LoRA adapters in FP32 (ensures gradient flow)
-        lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
-        return (base_out + lora_out).to(x.dtype)
+        # Base frozen quantized layer
+        base_out = self.base(x).to(torch.float32)
+
+        # LoRA adapters in FP32 (gradients flow here)
+        lora_in = x.to(torch.float32)
+        lora_out = self.lora_B(self.lora_A(lora_in))  # stays FP32 with grads
+
+        # Combine in FP32, then cast once to match input dtype
+        out = base_out + lora_out
+        return out.to(x.dtype)
 
 
 class QLoRABigNet(torch.nn.Module):

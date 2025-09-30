@@ -4,7 +4,8 @@ import torch
 
 def block_quantize_4bit(x: torch.Tensor, group_size: int = 32):
     """
-    Quantize into 4-bit with larger group size (default 32) to save memory.
+    Quantize a 1D tensor into 4-bit blocks with a larger group size to save memory.
+    Returns packed int8 values [blocks, group_size/2] and per-block norms [blocks, 1].
     """
     assert x.dim() == 1
     assert x.size(0) % group_size == 0
@@ -15,23 +16,9 @@ def block_quantize_4bit(x: torch.Tensor, group_size: int = 32):
     x_norm = (x + normalization) / (2 * normalization + 1e-8)
     x_quant_8 = (x_norm * 15).round().to(torch.int8)         # [blocks, group_size]
 
-    # pack 2 values into 1 byte
+    # pack two 4-bit values into one byte
     x_quant_4 = (x_quant_8[:, ::2] & 0xF) + ((x_quant_8[:, 1::2] & 0xF) << 4)
-    return x_quant_4, normalization.to(torch.float16)
-
-
-def block_dequantize_4bit(q4: torch.Tensor, norm: torch.Tensor, group_size: int = 32):
-    """
-    Dequantize from packed 4-bit with scaling.
-    """
-    q8 = torch.empty(q4.size(0), q4.size(1) * 2, dtype=torch.int8, device=q4.device)
-    q8[:, ::2] = q4 & 0xF
-    q8[:, 1::2] = (q4 >> 4) & 0xF
-
-    q8 = q8.to(torch.float32) / 15.0
-    norm = norm.to(torch.float32)
-    x = (q8 * 2 * norm) - norm
-    return x.view(-1, group_size).reshape(-1)
+    return x_quant_4, normalization.to(torch.float16)        # [blocks, group_size/2], [blocks, 1]
 
 
 class LinearGrouped4Bit(torch.nn.Module):
@@ -41,8 +28,16 @@ class LinearGrouped4Bit(torch.nn.Module):
         self._group_size = group_size
 
         blocks = in_features // group_size
-        self.register_buffer("weight_q4", torch.zeros(out_features, blocks, group_size // 2, dtype=torch.int8), persistent=False)
-        self.register_buffer("weight_norm", torch.ones(out_features, blocks, 1, dtype=torch.float16), persistent=False)
+        self.register_buffer(
+            "weight_q4",
+            torch.zeros(out_features, blocks, group_size // 2, dtype=torch.int8),
+            persistent=False,
+        )
+        self.register_buffer(
+            "weight_norm",
+            torch.ones(out_features, blocks, 1, dtype=torch.float16),
+            persistent=False,
+        )
 
         self.bias = None
         if bias:
@@ -61,22 +56,21 @@ class LinearGrouped4Bit(torch.nn.Module):
                 q4_list.append(q4.unsqueeze(0))
                 norm_list.append(norm.unsqueeze(0))
 
-            self.weight_q4 = torch.cat(q4_list, dim=0)
-            self.weight_norm = torch.cat(norm_list, dim=0)
+            self.weight_q4 = torch.cat(q4_list, dim=0)      # [out_features, blocks, group_size/2]
+            self.weight_norm = torch.cat(norm_list, dim=0)  # [out_features, blocks, 1]
 
     def forward(self, x: torch.Tensor):
-        out_features, in_features = self._shape
-        blocks = in_features // self._group_size
-
-        # unpack
-        q8 = torch.empty(self.weight_q4.size(0), self.weight_q4.size(1) * 2, dtype=torch.int8, device=self.weight_q4.device)
-        q8[:, ::2] = self.weight_q4 & 0xF
-        q8[:, 1::2] = (self.weight_q4 >> 4) & 0xF
+        # self.weight_q4: [out_features, blocks, group_size/2]
+        low = self.weight_q4 & 0xF
+        high = (self.weight_q4 >> 4) & 0xF
+        q8 = torch.stack((low, high), dim=-1).reshape(
+            self.weight_q4.size(0), self.weight_q4.size(1), self._group_size
+        )  # [out_features, blocks, group_size]
 
         q8 = q8.to(torch.float32) / 15.0
-        norms = self.weight_norm.to(torch.float32).expand(-1, -1, self._group_size).reshape(self.weight_q4.size(0), -1)
+        norms = self.weight_norm.to(torch.float32).expand(-1, -1, self._group_size)  # [out, blocks, group_size]
 
-        W = (q8 * 2 * norms - norms)  # [out_features, in_features]
+        W = (q8 * 2 * norms - norms).reshape(self.weight_q4.size(0), -1)  # [out_features, in_features]
         return torch.nn.functional.linear(x.to(torch.float32), W, self.bias)
 
 
