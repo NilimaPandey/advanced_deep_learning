@@ -44,13 +44,19 @@ class Linear4Bit(torch.nn.Module):
             self.weight_norm = torch.cat(norm_list, dim=0)  # [out_features, blocks, 1]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        xq, norms = self.weight_q4, self.weight_norm.to(torch.float32)
-        q8 = torch.empty(xq.size(0), xq.size(1) * 2, dtype=torch.int8, device=xq.device)
-        q8[:, ::2] = xq & 0xF
-        q8[:, 1::2] = (xq >> 4) & 0xF
-        q8 = q8.to(torch.float32) / 15.0
-        norms = norms.expand(-1, -1, self._group_size).reshape(xq.size(0), -1)
-        W = (q8 * 2 * norms) - norms
+        # xq: [out_features, blocks, group_size/2]
+        xq = self.weight_q4
+        norms = self.weight_norm.to(torch.float32)  # [out_features, blocks, 1]
+
+        # unpack each 4-bit packed int into two values
+        q8 = torch.empty(xq.size(0), xq.size(1), self._group_size, dtype=torch.int8, device=xq.device)
+        q8[:, :, ::2] = xq & 0xF
+        q8[:, :, 1::2] = (xq >> 4) & 0xF
+
+        # normalize and rescale
+        q8 = q8.to(torch.float32) / 15.0  # [out_features, blocks, group_size]
+        W = (q8 * 2 * norms - norms).reshape(xq.size(0), -1)  # [out_features, in_features]
+
         return torch.nn.functional.linear(x.to(torch.float32), W, self.bias)
 
 
