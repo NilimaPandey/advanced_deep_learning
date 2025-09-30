@@ -7,19 +7,21 @@ class QLoRALinear(torch.nn.Module):
     def __init__(self, base_layer: torch.nn.Module, lora_dim: int):
         super().__init__()
         self.base = base_layer
-        self.base.requires_grad_(False)
+        self.base.requires_grad_(False)  # freeze quantized base
 
         in_features = base_layer._shape[1]
         out_features = base_layer._shape[0]
 
+        # LoRA adapters (trainable)
         self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
         self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
 
-        torch.nn.init.normal_(self.lora_A.weight, std=1e-4)
+        # Zero init → model == BigNet4Bit at load time
+        torch.nn.init.zeros_(self.lora_A.weight)
         torch.nn.init.zeros_(self.lora_B.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        base_out = self.base(x)
+        base_out = self.base(x)  # quantized base
         lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
         return (base_out + lora_out).to(x.dtype)
 
@@ -36,7 +38,9 @@ class QLoRABigNet(torch.nn.Module):
                 torch.nn.ReLU(),
                 QLoRALinear(Linear4Bit(channels, channels, True, group_size), lora_dim),
             )
-        def forward(self, x): return self.model(x) + x
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.model(x) + x
 
     def __init__(self, lora_dim: int = 32, group_size: int = 16):
         super().__init__()
@@ -48,7 +52,9 @@ class QLoRABigNet(torch.nn.Module):
             self.Block(BIGNET_DIM, lora_dim, group_size), LayerNorm(BIGNET_DIM),
             self.Block(BIGNET_DIM, lora_dim, group_size),
         )
-    def forward(self, x): return self.model(x)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model(x)
 
 
 def load(path: Path | None) -> QLoRABigNet:
