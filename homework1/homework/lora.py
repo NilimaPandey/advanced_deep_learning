@@ -1,7 +1,7 @@
 from pathlib import Path
 import torch
 from .bignet import BIGNET_DIM, LayerNorm
-from .half_precision import HalfLinear   # ✅ import HalfLinear
+from .half_precision import HalfLinear
 
 
 class LoRALinear(HalfLinear):
@@ -12,12 +12,11 @@ class LoRALinear(HalfLinear):
         self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
         self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
 
-        # Init carefully so output ≈ baseline
         torch.nn.init.normal_(self.lora_A.weight, std=1e-4)
         torch.nn.init.zeros_(self.lora_B.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        base_out = super().forward(x)   # HalfLinear forward
+        base_out = super().forward(x)
         lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
         return base_out + lora_out.to(x.dtype)
 
@@ -40,16 +39,11 @@ class LoRABigNet(torch.nn.Module):
     def __init__(self, lora_dim: int = 32):
         super().__init__()
         self.model = torch.nn.Sequential(
-            self.Block(BIGNET_DIM, lora_dim),
-            LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM, lora_dim),
-            LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM, lora_dim),
-            LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM, lora_dim),
-            LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM, lora_dim),
-            LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim), LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim), LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim), LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim), LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM, lora_dim), LayerNorm(BIGNET_DIM),
             self.Block(BIGNET_DIM, lora_dim),
         )
 
