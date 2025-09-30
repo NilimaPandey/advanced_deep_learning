@@ -4,26 +4,27 @@ from .bignet import BIGNET_DIM, LayerNorm
 
 
 class QLoRALinear(torch.nn.Module):
-    def __init__(self, base_layer: torch.nn.Module, lora_dim: int):
+    def __init__(self, in_features: int, out_features: int, lora_dim: int, group_size: int = 16, bias: bool = True):
         super().__init__()
-        self.base = base_layer
-        self.base.requires_grad_(False)  # freeze quantized base
+        from .low_precision import Linear4Bit
 
-        in_features = base_layer._shape[1]
-        out_features = base_layer._shape[0]
+        # Base quantized linear
+        self.base = Linear4Bit(in_features, out_features, bias, group_size)
+        self.base.requires_grad_(False)
 
-        # LoRA adapters (trainable)
+        # LoRA adapters (zero init)
         self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
         self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
-
-        # Zero init → model == BigNet4Bit at load time
         torch.nn.init.zeros_(self.lora_A.weight)
         torch.nn.init.zeros_(self.lora_B.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        base_out = self.base(x)  # quantized base
-        lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
-        return (base_out + lora_out).to(x.dtype)
+        base_out = self.base(x)
+        if self.lora_A.weight.requires_grad or self.lora_B.weight.requires_grad:
+            lora_out = self.lora_B(self.lora_A(x.to(torch.float32)))
+            return (base_out + lora_out).to(x.dtype)
+        return base_out
+
 
 
 class QLoRABigNet(torch.nn.Module):
@@ -60,5 +61,7 @@ class QLoRABigNet(torch.nn.Module):
 def load(path: Path | None) -> QLoRABigNet:
     net = QLoRABigNet()
     if path is not None:
-        net.load_state_dict(torch.load(path, weights_only=True), strict=False)
+        state = torch.load(path, weights_only=True)
+        net.load_state_dict(state, strict=False)
     return net
+
