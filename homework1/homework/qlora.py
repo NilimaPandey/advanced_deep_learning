@@ -7,16 +7,30 @@ from .low_precision import Linear4Bit
 class QLoRALinear(torch.nn.Module):
     def __init__(self, in_features: int, out_features: int, lora_dim: int, group_size: int = 16, bias: bool = True):
         super().__init__()
+        self._shape = (out_features, in_features)
 
         # Base quantized linear
         self.base = Linear4Bit(in_features, out_features, bias, group_size)
         self.base.requires_grad_(False)
 
-        # LoRA adapters (zero init to preserve forward accuracy)
+        # LoRA adapters (zero init → exact match with baseline at load)
         self.lora_A = torch.nn.Linear(in_features, lora_dim, bias=False, dtype=torch.float32)
         self.lora_B = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
         torch.nn.init.zeros_(self.lora_A.weight)
         torch.nn.init.zeros_(self.lora_B.weight)
+
+        # Hook to redirect checkpoint weights into the base Linear4Bit
+        self._register_load_state_dict_pre_hook(QLoRALinear._load_state_dict_pre_hook, with_module=True)
+
+    @staticmethod
+    def _load_state_dict_pre_hook(module, state_dict, prefix, *args, **kwargs):
+        # If checkpoint has this weight, quantize into base
+        if f"{prefix}weight" in state_dict:
+            weight = state_dict[f"{prefix}weight"]
+            del state_dict[f"{prefix}weight"]
+            module.base._load_state_dict_pre_hook(
+                {f"{prefix}base.weight": weight}, f"{prefix}base.", {}, True, [], [], []
+            )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         base_out = self.base(x)
