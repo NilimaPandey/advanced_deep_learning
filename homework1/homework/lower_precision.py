@@ -2,111 +2,91 @@ from pathlib import Path
 import torch
 
 
-def block_quantize_4bit(x: torch.Tensor, group_size: int = 32):
+def quantize_2bit(x: torch.Tensor):
     """
-    Quantize a 1D tensor into 4-bit blocks with a larger group size to save memory.
-    Returns packed int8 values [blocks, group_size/2] and per-block norms [blocks, 1].
+    2-bit quantization to {-1, 0, +1} with per-row scaling.
+    Returns quantized weights (int8) and scale (float16).
     """
-    assert x.dim() == 1
-    assert x.size(0) % group_size == 0
+    scale = x.abs().max()
+    if scale == 0:
+        return torch.zeros_like(x, dtype=torch.int8), torch.tensor(1.0, dtype=torch.float16)
 
-    x = x.view(-1, group_size)                               # [blocks, group_size]
-    normalization = x.abs().max(dim=-1, keepdim=True).values # [blocks, 1]
-
-    x_norm = (x + normalization) / (2 * normalization + 1e-8)
-    x_quant_8 = (x_norm * 15).round().to(torch.int8)         # [blocks, group_size]
-
-    # pack two 4-bit values into one byte
-    x_quant_4 = (x_quant_8[:, ::2] & 0xF) + ((x_quant_8[:, 1::2] & 0xF) << 4)
-    return x_quant_4, normalization.to(torch.float16)        # [blocks, group_size/2], [blocks, 1]
+    # normalize and round to nearest {-1, 0, +1}
+    x_scaled = x / scale
+    q = torch.round(x_scaled).clamp(-1, 1).to(torch.int8)
+    return q, scale.to(torch.float16)
 
 
-class LinearGrouped4Bit(torch.nn.Module):
-    def __init__(self, in_features: int, out_features: int, bias: bool = True, group_size: int = 32):
+def dequantize_2bit(q: torch.Tensor, scale: torch.Tensor):
+    return q.to(torch.float32) * scale.to(torch.float32)
+
+
+class Linear2Bit(torch.nn.Module):
+    def __init__(self, in_features: int, out_features: int, bias: bool = True):
         super().__init__()
         self._shape = (out_features, in_features)
-        self._group_size = group_size
 
-        blocks = in_features // group_size
-        self.register_buffer(
-            "weight_q4",
-            torch.zeros(out_features, blocks, group_size // 2, dtype=torch.int8),
-            persistent=False,
-        )
-        self.register_buffer(
-            "weight_norm",
-            torch.ones(out_features, blocks, 1, dtype=torch.float16),
-            persistent=False,
-        )
+        # quantized weights and per-row scales
+        self.register_buffer("weight_q", torch.zeros(out_features, in_features, dtype=torch.int8), persistent=False)
+        self.register_buffer("weight_scale", torch.ones(out_features, 1, dtype=torch.float16), persistent=False)
 
         self.bias = None
         if bias:
             self.bias = torch.nn.Parameter(torch.zeros(out_features, dtype=torch.float32))
 
-        self._register_load_state_dict_pre_hook(LinearGrouped4Bit._load_state_dict_pre_hook, with_module=True)
+        # hook for checkpoint loading
+        self._register_load_state_dict_pre_hook(Linear2Bit._load_state_dict_pre_hook, with_module=True)
 
     def _load_state_dict_pre_hook(self, state_dict, prefix, *args, **kwargs):
         if f"{prefix}weight" in state_dict:
             weight = state_dict[f"{prefix}weight"]
             del state_dict[f"{prefix}weight"]
 
-            q4_list, norm_list = [], []
+            q_list, s_list = [], []
             for row in weight:
-                q4, norm = block_quantize_4bit(row, self._group_size)
-                q4_list.append(q4.unsqueeze(0))
-                norm_list.append(norm.unsqueeze(0))
+                q, s = quantize_2bit(row)
+                q_list.append(q.unsqueeze(0))
+                s_list.append(s.unsqueeze(0))
 
-            self.weight_q4 = torch.cat(q4_list, dim=0)      # [out_features, blocks, group_size/2]
-            self.weight_norm = torch.cat(norm_list, dim=0)  # [out_features, blocks, 1]
+            self.weight_q = torch.cat(q_list, dim=0)      # [out_features, in_features]
+            self.weight_scale = torch.cat(s_list, dim=0)  # [out_features, 1]
 
     def forward(self, x: torch.Tensor):
-        # self.weight_q4: [out_features, blocks, group_size/2]
-        low = self.weight_q4 & 0xF
-        high = (self.weight_q4 >> 4) & 0xF
-        q8 = torch.stack((low, high), dim=-1).reshape(
-            self.weight_q4.size(0), self.weight_q4.size(1), self._group_size
-        )  # [out_features, blocks, group_size]
-
-        q8 = q8.to(torch.float32) / 15.0
-        norms = self.weight_norm.to(torch.float32).expand(-1, -1, self._group_size)  # [out, blocks, group_size]
-
-        W = (q8 * 2 * norms - norms).reshape(self.weight_q4.size(0), -1)  # [out_features, in_features]
+        W = dequantize_2bit(self.weight_q, self.weight_scale)
         return torch.nn.functional.linear(x.to(torch.float32), W, self.bias)
 
 
-class BigNetGrouped4Bit(torch.nn.Module):
+class BigNet2Bit(torch.nn.Module):
     class Block(torch.nn.Module):
-        def __init__(self, channels, group_size=32):
+        def __init__(self, channels):
             super().__init__()
             self.model = torch.nn.Sequential(
-                LinearGrouped4Bit(channels, channels, group_size=group_size),
-                torch.nn.ReLU(),
-                LinearGrouped4Bit(channels, channels, group_size=group_size),
-                torch.nn.ReLU(),
-                LinearGrouped4Bit(channels, channels, group_size=group_size),
+                Linear2Bit(channels, channels), torch.nn.ReLU(),
+                Linear2Bit(channels, channels), torch.nn.ReLU(),
+                Linear2Bit(channels, channels),
             )
 
-        def forward(self, x):
+        def forward(self, x: torch.Tensor):
             return self.model(x) + x
 
-    def __init__(self, group_size=32):
+    def __init__(self):
         super().__init__()
         from .bignet import BIGNET_DIM, LayerNorm
         self.model = torch.nn.Sequential(
-            self.Block(BIGNET_DIM, group_size), LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM, group_size), LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM, group_size), LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM, group_size), LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM, group_size), LayerNorm(BIGNET_DIM),
-            self.Block(BIGNET_DIM, group_size),
+            self.Block(BIGNET_DIM), LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM), LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM), LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM), LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM), LayerNorm(BIGNET_DIM),
+            self.Block(BIGNET_DIM),
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         return self.model(x)
 
 
-def load(path: Path | None) -> BigNetGrouped4Bit:
-    net = BigNetGrouped4Bit()
+def load(path: Path | None) -> BigNet2Bit:
+    net = BigNet2Bit()
     if path is not None:
         net.load_state_dict(torch.load(path, weights_only=True))
     return net
