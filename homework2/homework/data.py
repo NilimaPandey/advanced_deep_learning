@@ -12,7 +12,10 @@ class ImageDataset:
     _cache_images: bool
 
     def __init__(self, split: str, cache_images: bool = True):
-        self.image_paths = list((DATASET_PATH / split).rglob("*.jpg"))
+        self.image_paths = []
+        for ext in ("*.jpg", "*.png", "*.jpeg"):
+            self.image_paths.extend((DATASET_PATH / split).rglob(ext))
+
         self._image_cache = [None] * len(self.image_paths)
         self._cache_images = cache_images
 
