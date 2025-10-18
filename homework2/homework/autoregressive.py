@@ -73,7 +73,13 @@ class AutoregressiveModel(torch.nn.Module, Autoregressive):
 
         # Positional embeddings
         if self.pos_embed is None or self.pos_embed.size(0) < seq_len:
-            self.pos_embed = torch.nn.Parameter(torch.randn(seq_len, self.d_latent) * 0.01, requires_grad=True)
+            self.pos_embed = torch.nn.Parameter(
+                torch.randn(seq_len, self.d_latent, device=emb.device) * 0.01,
+                requires_grad=True,
+            )
+        else:
+            self.pos_embed = torch.nn.Parameter(self.pos_embed.to(emb.device), requires_grad=True)
+
         emb = emb + self.pos_embed[:seq_len]
 
         # Shift input right by one position for autoregressive target alignment
@@ -109,7 +115,13 @@ class AutoregressiveModel(torch.nn.Module, Autoregressive):
         for i in range(seq_len):
             emb = self.token_embed(tokens)
             if self.pos_embed is None or self.pos_embed.size(0) < seq_len:
-                self.pos_embed = torch.nn.Parameter(torch.randn(seq_len, self.d_latent) * 0.01, requires_grad=True)
+                self.pos_embed = torch.nn.Parameter(
+                    torch.randn(seq_len, self.d_latent, device=emb.device) * 0.01,
+                    requires_grad=True,
+                )
+            else:
+                self.pos_embed = torch.nn.Parameter(self.pos_embed.to(emb.device), requires_grad=True)
+
             emb = emb + self.pos_embed[:seq_len]
 
             mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
