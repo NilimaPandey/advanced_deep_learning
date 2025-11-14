@@ -7,31 +7,43 @@ class CoTModel(BaseLLM):
         Take a question and convert it into a chat template. The LLM will likely answer much
         better if you provide a chat template. self.tokenizer.apply_chat_template can help here
         """
-        # Use multiple examples (few-shot) with clear, short reasoning
+        # Add system message with clear instruction
         messages = [
             {
-                "role": "user",
-                "content": "How many grams are there per 2 kilograms?"
-            },
-            {
-                "role": "assistant",
-                "content": "1 kg = 1000 g, so 2 kg = 2000 g. <answer>2000</answer>"
+                "role": "system",
+                "content": "Answer unit conversion questions. Show calculation and put final number in <answer>NUMBER</answer> tags."
             },
             {
                 "role": "user",
-                "content": "How many meters are there per 3 kilometers?"
+                "content": "How many grams are in 5 kilograms?"
             },
             {
                 "role": "assistant",
-                "content": "1 km = 1000 m, so 3 km = 3000 m. <answer>3000</answer>"
+                "content": "1 kg = 1000 g, so 5 kg = 5 * 1000 = 5000 g. <answer>5000</answer>"
             },
             {
                 "role": "user",
-                "content": "How many centimeters are there per 5 meters?"
+                "content": "How many centimeters are in 2 meters?"
             },
             {
                 "role": "assistant",
-                "content": "1 m = 100 cm, so 5 m = 500 cm. <answer>500</answer>"
+                "content": "1 m = 100 cm, so 2 m = 2 * 100 = 200 cm. <answer>200</answer>"
+            },
+            {
+                "role": "user",
+                "content": "How many millimeters are in 3 centimeters?"
+            },
+            {
+                "role": "assistant",
+                "content": "1 cm = 10 mm, so 3 cm = 3 * 10 = 30 mm. <answer>30</answer>"
+            },
+            {
+                "role": "user",
+                "content": "How many meters are in 4 kilometers?"
+            },
+            {
+                "role": "assistant",
+                "content": "1 km = 1000 m, so 4 km = 4 * 1000 = 4000 m. <answer>4000</answer>"
             },
             {
                 "role": "user",
