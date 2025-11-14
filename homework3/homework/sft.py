@@ -2,7 +2,15 @@ from .base_llm import BaseLLM
 from .data import Dataset, benchmark
 
 
-def load() -> BaseLLM:
+class SFTModel(BaseLLM):
+    """SFT model that formats prompts with instruction prefix."""
+
+    def format_prompt(self, question: str) -> str:
+        """Add instruction prefix to match training format."""
+        return f"Convert units and answer: {question}"
+
+
+def load() -> SFTModel:
     from pathlib import Path
 
     from peft import PeftModel
@@ -10,7 +18,7 @@ def load() -> BaseLLM:
     model_name = "sft_model"
     model_path = Path(__file__).parent / model_name
 
-    llm = BaseLLM()
+    llm = SFTModel()
     llm.model = PeftModel.from_pretrained(llm.model, model_path).to(llm.device)
     llm.model.eval()
 
@@ -52,11 +60,15 @@ def format_example(prompt: str, answer: str) -> dict[str, str]:
     # Round answer to 2 decimal places for easier learning
     rounded_answer = round(float(answer), 2)
 
+    # Add a brief instruction to help the model understand the task
+    # This makes it clearer during training what's expected
+    formatted_question = f"Convert units and answer: {prompt}"
+
     # Format the answer in the expected tag format
     formatted_answer = f"<answer>{rounded_answer}</answer>"
 
     return {
-        "question": prompt,
+        "question": formatted_question,
         "answer": formatted_answer
     }
 
@@ -96,8 +108,8 @@ def train_model(
     from peft import LoraConfig, get_peft_model
     from transformers import Trainer, TrainingArguments
 
-    # Load base model
-    llm = BaseLLM()
+    # Load base model with SFT formatting
+    llm = SFTModel()
 
     # Configure LoRA - using all-linear target modules as recommended
     lora_config = LoraConfig(
@@ -159,7 +171,7 @@ def train_model(
 
 def test_model(ckpt_path: str):
     testset = Dataset("valid")
-    llm = BaseLLM()
+    llm = SFTModel()
 
     # Load the model with LoRA adapters
     from peft import PeftModel
