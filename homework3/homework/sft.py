@@ -85,8 +85,8 @@ class TokenizedDataset:
 
 def train_model(
         output_dir: str = "homework/sft_model",
-        num_epochs: int = 3,
-        batch_size: int = 32,
+        num_train_epochs: int = 3,
+        per_device_train_batch_size: int = 32,
         learning_rate: float = 2e-4,
         **kwargs,
 ):
@@ -127,8 +127,8 @@ def train_model(
         output_dir=output_dir,
         logging_dir=output_dir,
         report_to="tensorboard",
-        num_train_epochs=num_epochs,
-        per_device_train_batch_size=batch_size,
+        num_train_epochs=num_train_epochs,
+        per_device_train_batch_size=per_device_train_batch_size,
         learning_rate=learning_rate,
         logging_steps=100,
         save_strategy="epoch",

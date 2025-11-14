@@ -20,8 +20,8 @@ def load() -> BaseLLM:
 def train_model(
         output_dir: str = "homework/rft_model",
         generated_data_path: str = "data/rft.json",
-        num_epochs: int = 3,
-        batch_size: int = 32,
+        num_train_epochs: int = 3,
+        per_device_train_batch_size: int = 32,
         learning_rate: float = 2e-4,
         **kwargs,
 ):
@@ -34,8 +34,8 @@ def train_model(
     Args:
         output_dir: Directory to save the trained model
         generated_data_path: Path to the generated dataset JSON file
-        num_epochs: Number of training epochs
-        batch_size: Batch size for training
+        num_train_epochs: Number of training epochs
+        per_device_train_batch_size: Batch size for training
         learning_rate: Learning rate
     """
     import json
@@ -110,8 +110,8 @@ def train_model(
         output_dir=output_dir,
         logging_dir=output_dir,
         report_to="tensorboard",
-        num_train_epochs=num_epochs,
-        per_device_train_batch_size=batch_size,
+        num_train_epochs=num_train_epochs,
+        per_device_train_batch_size=per_device_train_batch_size,
         learning_rate=learning_rate,
         logging_steps=100,
         save_strategy="epoch",
