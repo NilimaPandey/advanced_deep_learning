@@ -4,27 +4,29 @@ from .base_llm import BaseLLM
 class CoTModel(BaseLLM):
     def format_prompt(self, question: str) -> str:
         """
-        Take a question and convert it into a chat template. We give the model
-        one example and ask it to put the final numeric result inside
-        <answer>...</answer>.
+        Create a chat-style prompt with one chain-of-thought example.
+
+        We instruct the model to solve unit conversion problems, show brief
+        reasoning, and place the final numeric answer inside <answer>...</answer>.
         """
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are a helpful assistant that solves unit conversion "
-                    "questions step by step. Show brief reasoning and put the "
-                    "final numeric result inside <answer>...</answer>."
+                    "You are a helpful assistant that converts between units "
+                    "(meters, feet, yards, kilometers, miles, kilograms, pounds, etc.). "
+                    "Reason step by step briefly and put the final numeric answer "
+                    "inside <answer>...</answer>. Be concise."
                 ),
             },
             # One-shot example
             {
                 "role": "user",
-                "content": "How many grams are in 2 kg?",
+                "content": "How many grams are there in 2.5 kilograms?",
             },
             {
                 "role": "assistant",
-                "content": "1 kg = 1000 g. 2 × 1000 = <answer>2000</answer>",
+                "content": "1 kilogram = 1000 grams, so 2.5 × 1000 = <answer>2500</answer>.",
             },
             # Actual question
             {
@@ -32,8 +34,7 @@ class CoTModel(BaseLLM):
                 "content": question,
             },
         ]
-
-        # Use the tokenizer's chat template to format this as a single prompt string
+        # Use the tokenizer's chat template for this model
         return self.tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
@@ -42,14 +43,12 @@ class CoTModel(BaseLLM):
 
 
 def load() -> BaseLLM:
-    """
-    Helper used by homework.__init__:
-    returns an instance of the CoTModel.
-    """
+    """Entry point used by homework.__init__.load_cot."""
     return CoTModel()
 
 
 def test_model():
     model = CoTModel()
-    q = "How many centimeters are in 3 meters?"
-    print(model.generate(q, max_new_tokens=40))
+    q = "How many centimeters are there in 3 meters?"
+    out = model.generate(q, max_new_tokens=64)
+    print(out)
