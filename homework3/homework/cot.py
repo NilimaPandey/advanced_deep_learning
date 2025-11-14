@@ -4,43 +4,25 @@ from .base_llm import BaseLLM
 class CoTModel(BaseLLM):
     def format_prompt(self, question: str) -> str:
         """
-        Build a chat dialogue with:
-        - Short system instructions
-        - One worked example
-        - The user's question
-
-        We then turn this into a single prompt string using the tokenizer's
-        chat template. The grader expects you to use apply_chat_template
-        with add_generation_prompt=True, tokenize=False.
+        Implement in-context learning prompt using chat template.
         """
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "You are a helpful assistant that solves unit conversion "
-                    "problems (meters, feet, yards, kilometers, miles, "
-                    "kilograms, pounds, etc.). "
-                    "Reason step by step briefly and put the final numeric "
-                    "result inside <answer>...</answer>. Be concise."
-                ),
+                "content": "You are a helpful assistant. Show short reasoning and put the final numeric answer inside <answer></answer>."
             },
-            # One-shot example
             {
                 "role": "user",
-                "content": "How many grams are there in 2.5 kilograms?",
+                "content": "How many grams are in 2 kilograms?"
             },
             {
                 "role": "assistant",
-                "content": (
-                    "1 kilogram = 1000 grams, so "
-                    "2.5 × 1000 = <answer>2500</answer>."
-                ),
+                "content": "1 kg = 1000 g, therefore 2×1000 = <answer>2000</answer>"
             },
-            # Actual question
             {
                 "role": "user",
-                "content": question,
-            },
+                "content": question
+            }
         ]
 
         return self.tokenizer.apply_chat_template(
@@ -48,19 +30,3 @@ class CoTModel(BaseLLM):
             add_generation_prompt=True,
             tokenize=False,
         )
-
-
-def load() -> BaseLLM:
-    """
-    Entry point used by homework.__init__:
-    the grader does `from homework import load_cot`
-    which redirects here.
-    """
-    return CoTModel()
-
-
-def test_model():
-    model = CoTModel()
-    q = "How many centimeters are there in 3 meters?"
-    out = model.generate(q, max_new_tokens=64)
-    print(out)
