@@ -1,51 +1,46 @@
 from .base_llm import BaseLLM
 
 
+# in cot.py
+from .base_llm import BaseLLM
+
 class CoTModel(BaseLLM):
     def format_prompt(self, question: str) -> str:
         """
-        Take a question and convert it into a chat template. The LLM will likely answer much
-        better if you provide a chat template. self.tokenizer.apply_chat_template can help here
+        Chat-style prompt that makes the model behave like a strict
+        unit-conversion calculator. It gives a single example and
+        forces the output format <answer>NUMBER</answer>.
         """
-        # Use multiple examples (few-shot) with clear, short reasoning
         messages = [
             {
+                "role": "system",
+                "content": (
+                    "You are a calculator for unit conversions. "
+                    "For each question, compute the correct numeric answer "
+                    "and reply with EXACTLY one line:\n"
+                    "<answer>NUMBER</answer>\n"
+                    "No words, no explanation, no units."
+                ),
+            },
+            {
                 "role": "user",
-                "content": "How many grams are there per 2 kilograms?"
+                "content": "How many grams are there in 2.5 kilograms?",
             },
             {
                 "role": "assistant",
-                "content": "1 kg = 1000 g, so 2 kg = 2000 g. <answer>2000</answer>"
+                "content": "<answer>2500</answer>",
             },
             {
                 "role": "user",
-                "content": "How many meters are there per 3 kilometers?"
+                "content": question,
             },
-            {
-                "role": "assistant",
-                "content": "1 km = 1000 m, so 3 km = 3000 m. <answer>3000</answer>"
-            },
-            {
-                "role": "user",
-                "content": "How many centimeters are there per 5 meters?"
-            },
-            {
-                "role": "assistant",
-                "content": "1 m = 100 cm, so 5 m = 500 cm. <answer>500</answer>"
-            },
-            {
-                "role": "user",
-                "content": question
-            }
         ]
 
-        prompt = self.tokenizer.apply_chat_template(
+        return self.tokenizer.apply_chat_template(
             messages,
+            add_generation_prompt=True,
             tokenize=False,
-            add_generation_prompt=True
         )
-
-        return prompt
 
 
 def load() -> CoTModel:
