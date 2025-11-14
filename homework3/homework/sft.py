@@ -1,24 +1,176 @@
 from .base_llm import BaseLLM
+from .data import Dataset, benchmark
 
 
 def load() -> BaseLLM:
-    """
-    REQUIRED BY THE GRADER.
-    Load the SFT model LoRA adapter if it exists,
-    otherwise return a BaseLLM instance.
-    """
     from pathlib import Path
+
     from peft import PeftModel
 
-    model_dir = Path(__file__).parent / "sft_model"
+    model_name = "sft_model"
+    model_path = Path(__file__).parent / model_name
 
     llm = BaseLLM()
-
-    # If trained adapter exists, load it
-    if model_dir.exists():
-        try:
-            llm.model = PeftModel.from_pretrained(llm.model, model_dir).to(llm.device)
-        except Exception:
-            pass
+    llm.model = PeftModel.from_pretrained(llm.model, model_path).to(llm.device)
+    llm.model.eval()
 
     return llm
+
+
+def tokenize(tokenizer, question: str, answer: str):
+    """
+    Tokenize a data element.
+    We first append the <EOS> token to the question / answer pair.
+    Then we tokenize and construct the ground truth `labels`.
+    `labels[i] == -100` for the question or masked out parts, since we only want to supervise
+    the answer.
+    """
+    full_text = f"{question} {answer}{tokenizer.eos_token}"
+
+    tokenizer.padding_side = "right"
+    tokenizer.pad_token = tokenizer.eos_token
+    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=128)
+
+    input_ids = full["input_ids"]
+    question_len = len(tokenizer(question)["input_ids"])
+
+    # Create labels: mask out the prompt part
+    labels = [-100] * question_len + input_ids[question_len:]
+
+    for i in range(len(labels)):
+        if full["attention_mask"][i] == 0:
+            labels[i] = -100
+
+    full["labels"] = labels
+    return full
+
+
+def format_example(prompt: str, answer: str) -> dict[str, str]:
+    """
+    Construct a question / answer pair. Consider rounding the answer to make it easier for the LLM.
+    """
+    # Round answer to 2 decimal places for easier learning
+    rounded_answer = round(float(answer), 2)
+
+    # Format the answer in the expected tag format
+    formatted_answer = f"<answer>{rounded_answer}</answer>"
+
+    return {
+        "question": prompt,
+        "answer": formatted_answer
+    }
+
+
+class TokenizedDataset:
+    def __init__(self, tokenizer, data: Dataset, format_fn):
+        """
+        Use the
+        - BaseLLM.tokenizer
+        - Dataset
+        - format_fn which converts a data element into a dict with entries
+          - question: str
+          - answer: str
+        """
+        self.format_fn = format_fn
+        self.tokenizer = tokenizer
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        formated_data = self.format_fn(*self.data[idx])
+        return tokenize(self.tokenizer, **formated_data)
+
+
+def train_model(
+        output_dir: str = "homework/sft_model",
+        num_epochs: int = 3,
+        batch_size: int = 32,
+        learning_rate: float = 2e-4,
+        **kwargs,
+):
+    """
+    Train the model using SFT (Supervised Fine-Tuning).
+    """
+    from peft import LoraConfig, get_peft_model
+    from transformers import Trainer, TrainingArguments
+
+    # Load base model
+    llm = BaseLLM()
+
+    # Configure LoRA - using all-linear target modules as recommended
+    lora_config = LoraConfig(
+        r=8,  # Smaller rank to keep model size under 20MB
+        lora_alpha=32,  # 4x the rank as recommended
+        target_modules="all-linear",  # As recommended in README
+        lora_dropout=0.05,
+        bias="none",
+        task_type="CAUSAL_LM"
+    )
+
+    # Apply LoRA to the model
+    llm.model = get_peft_model(llm.model, lora_config)
+
+    # Enable input gradients for GPU (to avoid bug with gradient_checkpointing)
+    if llm.device == "cuda":
+        llm.model.enable_input_require_grads()
+
+    # Print trainable parameters
+    llm.model.print_trainable_parameters()
+
+    # Load and tokenize dataset
+    train_dataset = TokenizedDataset(llm.tokenizer, Dataset("train"), format_example)
+
+    # Set up training arguments
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        logging_dir=output_dir,
+        report_to="tensorboard",
+        num_train_epochs=num_epochs,
+        per_device_train_batch_size=batch_size,
+        learning_rate=learning_rate,
+        logging_steps=100,
+        save_strategy="epoch",
+        remove_unused_columns=False,
+        gradient_accumulation_steps=1,
+        gradient_checkpointing=True,  # As recommended to save GPU memory
+        warmup_steps=100,
+        fp16=llm.device == "cuda",
+        **kwargs
+    )
+
+    # Create trainer
+    trainer = Trainer(
+        model=llm.model,
+        args=training_args,
+        train_dataset=train_dataset,
+    )
+
+    # Train
+    trainer.train()
+
+    # Save the final model
+    trainer.save_model(output_dir)
+
+    # Test the model
+    test_model(output_dir)
+
+
+def test_model(ckpt_path: str):
+    testset = Dataset("valid")
+    llm = BaseLLM()
+
+    # Load the model with LoRA adapters
+    from peft import PeftModel
+
+    llm.model = PeftModel.from_pretrained(llm.model, ckpt_path).to(llm.device)
+
+    benchmark_result = benchmark(llm, testset, 100)
+    print(f"{benchmark_result.accuracy=}  {benchmark_result.answer_rate=}")
+
+
+if __name__ == "__main__":
+    from fire import Fire
+
+    Fire({"train": train_model, "test": test_model, "load": load})
