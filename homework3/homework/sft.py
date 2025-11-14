@@ -3,11 +3,11 @@ from .data import Dataset, benchmark
 
 
 class SFTModel(BaseLLM):
-    """SFT model - uses direct question format."""
+    """SFT model - uses Q: A: format."""
 
     def format_prompt(self, question: str) -> str:
-        """Direct question format (no prefix needed)."""
-        return question
+        """Format with Q: A: structure to match training."""
+        return f"Q: {question}\nA:"
 
 
 def load() -> SFTModel:
@@ -57,15 +57,14 @@ def format_example(prompt: str, answer: str) -> dict[str, str]:
     """
     Construct a question / answer pair. Consider rounding the answer to make it easier for the LLM.
     """
-    # Round answer to 2 decimal places for easier learning
-    rounded_answer = round(float(answer), 2)
+    # Round answer to 1 decimal place for easier learning
+    rounded_answer = round(float(answer), 1)
 
-    # Keep it simple and direct - just the question
-    # The model will learn the pattern from many examples
-    formatted_question = prompt
+    # Simple format that helps model understand the task
+    formatted_question = f"Q: {prompt}\nA:"
 
     # Format the answer in the expected tag format
-    formatted_answer = f"<answer>{rounded_answer}</answer>"
+    formatted_answer = f" <answer>{rounded_answer}</answer>"
 
     return {
         "question": formatted_question,
@@ -97,9 +96,9 @@ class TokenizedDataset:
 
 def train_model(
         output_dir: str = "homework/sft_model",
-        num_train_epochs: int = 5,  # Increased from 3
+        num_train_epochs: int = 5,
         per_device_train_batch_size: int = 32,
-        learning_rate: float = 3e-4,  # Slightly higher learning rate
+        learning_rate: float = 2e-4,  # Back to proven learning rate
         **kwargs,
 ):
     """
@@ -111,10 +110,10 @@ def train_model(
     # Load base model with SFT formatting
     llm = SFTModel()
 
-    # Configure LoRA with slightly higher rank for better capacity
+    # Configure LoRA with proven settings
     lora_config = LoraConfig(
-        r=16,  # Increased from 8 for better learning capacity
-        lora_alpha=64,  # 4x the rank
+        r=12,  # Good balance between capacity and size
+        lora_alpha=48,  # 4x the rank
         target_modules="all-linear",
         lora_dropout=0.05,
         bias="none",
