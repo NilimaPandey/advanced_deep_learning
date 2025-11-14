@@ -3,11 +3,11 @@ from .data import Dataset, benchmark
 
 
 class SFTModel(BaseLLM):
-    """SFT model that formats prompts with instruction prefix."""
+    """SFT model - uses direct question format."""
 
     def format_prompt(self, question: str) -> str:
-        """Add instruction prefix to match training format."""
-        return f"Convert units and answer: {question}"
+        """Direct question format (no prefix needed)."""
+        return question
 
 
 def load() -> SFTModel:
@@ -60,9 +60,9 @@ def format_example(prompt: str, answer: str) -> dict[str, str]:
     # Round answer to 2 decimal places for easier learning
     rounded_answer = round(float(answer), 2)
 
-    # Add a brief instruction to help the model understand the task
-    # This makes it clearer during training what's expected
-    formatted_question = f"Convert units and answer: {prompt}"
+    # Keep it simple and direct - just the question
+    # The model will learn the pattern from many examples
+    formatted_question = prompt
 
     # Format the answer in the expected tag format
     formatted_answer = f"<answer>{rounded_answer}</answer>"
@@ -97,9 +97,9 @@ class TokenizedDataset:
 
 def train_model(
         output_dir: str = "homework/sft_model",
-        num_train_epochs: int = 3,
+        num_train_epochs: int = 5,  # Increased from 3
         per_device_train_batch_size: int = 32,
-        learning_rate: float = 2e-4,
+        learning_rate: float = 3e-4,  # Slightly higher learning rate
         **kwargs,
 ):
     """
@@ -111,11 +111,11 @@ def train_model(
     # Load base model with SFT formatting
     llm = SFTModel()
 
-    # Configure LoRA - using all-linear target modules as recommended
+    # Configure LoRA with slightly higher rank for better capacity
     lora_config = LoraConfig(
-        r=8,  # Smaller rank to keep model size under 20MB
-        lora_alpha=32,  # 4x the rank as recommended
-        target_modules="all-linear",  # As recommended in README
+        r=16,  # Increased from 8 for better learning capacity
+        lora_alpha=64,  # 4x the rank
+        target_modules="all-linear",
         lora_dropout=0.05,
         bias="none",
         task_type="CAUSAL_LM"
@@ -134,7 +134,7 @@ def train_model(
     # Load and tokenize dataset
     train_dataset = TokenizedDataset(llm.tokenizer, Dataset("train"), format_example)
 
-    # Set up training arguments
+    # Set up training arguments with better settings
     training_args = TrainingArguments(
         output_dir=output_dir,
         logging_dir=output_dir,
@@ -142,12 +142,14 @@ def train_model(
         num_train_epochs=num_train_epochs,
         per_device_train_batch_size=per_device_train_batch_size,
         learning_rate=learning_rate,
-        logging_steps=100,
+        logging_steps=50,
         save_strategy="epoch",
+        save_total_limit=2,  # Only keep 2 checkpoints
         remove_unused_columns=False,
         gradient_accumulation_steps=1,
-        gradient_checkpointing=True,  # As recommended to save GPU memory
-        warmup_steps=100,
+        gradient_checkpointing=True,
+        warmup_steps=50,
+        weight_decay=0.01,  # Add weight decay for regularization
         fp16=llm.device == "cuda",
         **kwargs
     )

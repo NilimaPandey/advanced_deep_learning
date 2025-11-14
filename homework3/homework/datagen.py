@@ -1,10 +1,10 @@
-def generate_dataset(output_json: str = "data/rft.json", oversample: int = 10, temperature: float = 0.6,
-                     use_larger_model: bool = False):
+def generate_dataset(output_json: str = "data/rft.json", oversample: int = 15, temperature: float = 0.8,
+                     use_sft_model: bool = True):
     """
     Generate a dataset using rejection sampling / filtering.
 
     The idea is to:
-    1. Load the CoT model
+    1. Load a model (preferably SFT, which is much better than CoT)
     2. Generate multiple answers for each question (oversample)
     3. Keep only the correct answers
     4. Save the filtered dataset in the format: [question, answer, reasoning]
@@ -12,21 +12,27 @@ def generate_dataset(output_json: str = "data/rft.json", oversample: int = 10, t
     Args:
         output_json: Path to save the generated dataset (default: data/rft.json)
         oversample: Number of attempts per question
-        temperature: Sampling temperature for generation
-        use_larger_model: If True, use HuggingFaceTB/SmolLM2-1.7B-Instruct for better rollouts
+        temperature: Sampling temperature for generation (higher = more diverse)
+        use_sft_model: If True, use trained SFT model for generation (recommended)
     """
     import json
     from pathlib import Path
 
-    from .cot import CoTModel
     from .data import Dataset, is_answer_valid
 
-    # Load the CoT model - optionally use larger model for better generation
-    if use_larger_model:
-        print("Using larger model: HuggingFaceTB/SmolLM2-1.7B-Instruct")
-        from .base_llm import BaseLLM
-        model = CoTModel(checkpoint="HuggingFaceTB/SmolLM2-1.7B-Instruct")
+    # Use SFT model if available (much better than CoT!)
+    if use_sft_model:
+        try:
+            from .sft import load as load_sft
+            print("Using SFT model for data generation (recommended)")
+            model = load_sft()
+        except Exception as e:
+            print(f"Could not load SFT model ({e}), falling back to CoT")
+            from .cot import CoTModel
+            model = CoTModel()
     else:
+        from .cot import CoTModel
+        print("Using CoT model for data generation")
         model = CoTModel()
 
     # Load the training dataset
@@ -43,7 +49,7 @@ def generate_dataset(output_json: str = "data/rft.json", oversample: int = 10, t
         # Format the prompt
         prompt = model.format_prompt(question)
 
-        # Generate multiple responses
+        # Generate multiple responses with higher temperature for diversity
         responses = model.batched_generate(
             [prompt] * oversample,
             temperature=temperature
@@ -78,6 +84,13 @@ def generate_dataset(output_json: str = "data/rft.json", oversample: int = 10, t
     success_rate = success_count / len(train_dataset) * 100
     print(f"\nGenerated {len(generated_data)} valid samples from {len(train_dataset)} questions")
     print(f"Success rate: {success_rate:.1f}%")
+
+    if success_rate < 50:
+        print(f"\n⚠️  WARNING: Success rate is only {success_rate:.1f}%")
+        print("Consider:")
+        print("  - Using SFT model (--use_sft_model True)")
+        print("  - Increasing oversample (--oversample 20-30)")
+        print("  - Increasing temperature (--temperature 0.9-1.0)")
 
     # Save the dataset
     output_path = Path(output_json)

@@ -20,9 +20,9 @@ def load() -> BaseLLM:
 def train_model(
         output_dir: str = "homework/rft_model",
         generated_data_path: str = "data/rft.json",
-        num_train_epochs: int = 3,
+        num_train_epochs: int = 5,  # Increased for better learning
         per_device_train_batch_size: int = 32,
-        learning_rate: float = 2e-4,
+        learning_rate: float = 3e-4,  # Slightly higher
         **kwargs,
 ):
     """
@@ -49,10 +49,10 @@ def train_model(
     # Load base model
     llm = BaseLLM()
 
-    # Configure LoRA - can use slightly larger rank for RFT (as mentioned in README)
+    # Configure LoRA with good capacity (larger than SFT, under 50MB total)
     lora_config = LoraConfig(
-        r=12,  # Slightly larger than SFT but still under 50MB total
-        lora_alpha=48,  # 4x the rank
+        r=20,  # Increased for better capacity
+        lora_alpha=80,  # 4x the rank
         target_modules="all-linear",
         lora_dropout=0.05,
         bias="none",
@@ -83,6 +83,11 @@ def train_model(
 
     print(f"Loaded {len(generated_data)} training samples from {generated_data_path}")
 
+    if len(generated_data) < 100:
+        print(f"\n⚠️  WARNING: Only {len(generated_data)} training samples!")
+        print("This is too few. You should have at least 500-700 samples.")
+        print("Regenerate with: python -m homework.datagen data/rft.json --oversample 30 --temperature 0.9")
+
     # Create a custom dataset class for RFT
     # Data format from datagen: [question, answer, reasoning]
     class RFTDataset:
@@ -105,7 +110,7 @@ def train_model(
     # Create dataset
     train_dataset = RFTDataset(llm.tokenizer, generated_data)
 
-    # Set up training arguments
+    # Set up training arguments with better settings
     training_args = TrainingArguments(
         output_dir=output_dir,
         logging_dir=output_dir,
@@ -113,12 +118,14 @@ def train_model(
         num_train_epochs=num_train_epochs,
         per_device_train_batch_size=per_device_train_batch_size,
         learning_rate=learning_rate,
-        logging_steps=100,
+        logging_steps=50,
         save_strategy="epoch",
+        save_total_limit=2,
         remove_unused_columns=False,
         gradient_accumulation_steps=1,
         gradient_checkpointing=True,
-        warmup_steps=100,
+        warmup_steps=50,
+        weight_decay=0.01,
         fp16=llm.device == "cuda",
         **kwargs
     )

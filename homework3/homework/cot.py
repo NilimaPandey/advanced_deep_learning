@@ -7,18 +7,31 @@ class CoTModel(BaseLLM):
         Take a question and convert it into a chat template. The LLM will likely answer much
         better if you provide a chat template. self.tokenizer.apply_chat_template can help here
         """
+        # Use multiple examples (few-shot) with clear, short reasoning
         messages = [
             {
-                "role": "system",
-                "content": "You are a helpful assistant that solves unit conversion problems. Be concise and show your work step by step."
-            },
-            {
                 "role": "user",
-                "content": "How many meters are there per 5 kilometers?"
+                "content": "How many grams are there per 2 kilograms?"
             },
             {
                 "role": "assistant",
-                "content": "1 kilometer = 1000 meters. So 5 kilometers = 5 × 1000 = 5000 meters. <answer>5000</answer>"
+                "content": "1 kg = 1000 g, so 2 kg = 2000 g. <answer>2000</answer>"
+            },
+            {
+                "role": "user",
+                "content": "How many meters are there per 3 kilometers?"
+            },
+            {
+                "role": "assistant",
+                "content": "1 km = 1000 m, so 3 km = 3000 m. <answer>3000</answer>"
+            },
+            {
+                "role": "user",
+                "content": "How many centimeters are there per 5 meters?"
+            },
+            {
+                "role": "assistant",
+                "content": "1 m = 100 cm, so 5 m = 500 cm. <answer>500</answer>"
             },
             {
                 "role": "user",
