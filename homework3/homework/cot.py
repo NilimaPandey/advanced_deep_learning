@@ -4,12 +4,16 @@ from .base_llm import BaseLLM
 class CoTModel(BaseLLM):
     def format_prompt(self, question: str) -> str:
         """
-        Implement in-context learning prompt using chat template.
+        Implement the required in-context prompt using chat template.
         """
         messages = [
             {
                 "role": "system",
-                "content": "You are a helpful assistant. Show short reasoning and put the final numeric answer inside <answer></answer>."
+                "content": (
+                    "You are a helpful assistant that solves unit conversion "
+                    "questions. Show short reasoning and put the final numeric "
+                    "answer inside <answer></answer>."
+                ),
             },
             {
                 "role": "user",
@@ -30,3 +34,12 @@ class CoTModel(BaseLLM):
             add_generation_prompt=True,
             tokenize=False,
         )
+
+
+def load() -> BaseLLM:
+    """
+    REQUIRED BY THE GRADER.
+    The grader calls: from homework import load_cot
+    which is mapped to this function.
+    """
+    return CoTModel()
