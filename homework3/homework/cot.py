@@ -4,19 +4,24 @@ from .base_llm import BaseLLM
 class CoTModel(BaseLLM):
     def format_prompt(self, question: str) -> str:
         """
-        Create a chat-style prompt with one chain-of-thought example.
+        Build a chat dialogue with:
+        - Short system instructions
+        - One worked example
+        - The user's question
 
-        We instruct the model to solve unit conversion problems, show brief
-        reasoning, and place the final numeric answer inside <answer>...</answer>.
+        We then turn this into a single prompt string using the tokenizer's
+        chat template. The grader expects you to use apply_chat_template
+        with add_generation_prompt=True, tokenize=False.
         """
         messages = [
             {
                 "role": "system",
                 "content": (
-                    "You are a helpful assistant that converts between units "
-                    "(meters, feet, yards, kilometers, miles, kilograms, pounds, etc.). "
-                    "Reason step by step briefly and put the final numeric answer "
-                    "inside <answer>...</answer>. Be concise."
+                    "You are a helpful assistant that solves unit conversion "
+                    "problems (meters, feet, yards, kilometers, miles, "
+                    "kilograms, pounds, etc.). "
+                    "Reason step by step briefly and put the final numeric "
+                    "result inside <answer>...</answer>. Be concise."
                 ),
             },
             # One-shot example
@@ -26,7 +31,10 @@ class CoTModel(BaseLLM):
             },
             {
                 "role": "assistant",
-                "content": "1 kilogram = 1000 grams, so 2.5 × 1000 = <answer>2500</answer>.",
+                "content": (
+                    "1 kilogram = 1000 grams, so "
+                    "2.5 × 1000 = <answer>2500</answer>."
+                ),
             },
             # Actual question
             {
@@ -34,7 +42,7 @@ class CoTModel(BaseLLM):
                 "content": question,
             },
         ]
-        # Use the tokenizer's chat template for this model
+
         return self.tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
@@ -43,7 +51,11 @@ class CoTModel(BaseLLM):
 
 
 def load() -> BaseLLM:
-    """Entry point used by homework.__init__.load_cot."""
+    """
+    Entry point used by homework.__init__:
+    the grader does `from homework import load_cot`
+    which redirects here.
+    """
     return CoTModel()
 
 
