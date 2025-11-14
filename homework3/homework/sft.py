@@ -3,11 +3,24 @@ from .data import Dataset, benchmark
 
 
 class SFTModel(BaseLLM):
-    """SFT model - uses Q: A: format."""
+    """SFT model - uses chat template like CoT but with direct answers."""
 
     def format_prompt(self, question: str) -> str:
-        """Format with Q: A: structure to match training."""
-        return f"Q: {question}\nA:"
+        """Use chat template for consistency."""
+        messages = [
+            {
+                "role": "user",
+                "content": question
+            }
+        ]
+
+        prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+
+        return prompt
 
 
 def load() -> SFTModel:
@@ -57,14 +70,16 @@ def format_example(prompt: str, answer: str) -> dict[str, str]:
     """
     Construct a question / answer pair. Consider rounding the answer to make it easier for the LLM.
     """
-    # Round answer to 1 decimal place for easier learning
-    rounded_answer = round(float(answer), 1)
+    # Round answer to whole number when possible, otherwise 1 decimal
+    rounded_answer = round(float(answer))
+    if abs(rounded_answer - float(answer)) > 0.01:
+        rounded_answer = round(float(answer), 1)
 
-    # Simple format that helps model understand the task
-    formatted_question = f"Q: {prompt}\nA:"
+    # Use chat template format for better results
+    formatted_question = prompt
 
-    # Format the answer in the expected tag format
-    formatted_answer = f" <answer>{rounded_answer}</answer>"
+    # Simple answer with just the number in tags
+    formatted_answer = f"<answer>{rounded_answer}</answer>"
 
     return {
         "question": formatted_question,
@@ -130,8 +145,39 @@ def train_model(
     # Print trainable parameters
     llm.model.print_trainable_parameters()
 
-    # Load and tokenize dataset
-    train_dataset = TokenizedDataset(llm.tokenizer, Dataset("train"), format_example)
+    # Load and prepare dataset with chat template
+    train_data = Dataset("train")
+
+    # Format data using chat template
+    class ChatFormattedDataset:
+        def __init__(self, tokenizer, data, format_fn):
+            self.tokenizer = tokenizer
+            self.data = data
+            self.format_fn = format_fn
+
+        def __len__(self):
+            return len(self.data)
+
+        def __getitem__(self, idx):
+            question, answer = self.data[idx]
+            formatted = self.format_fn(question, answer)
+
+            # Create chat format
+            messages = [
+                {"role": "user", "content": formatted["question"]}
+            ]
+
+            # Apply chat template to question
+            question_text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+
+            # Tokenize
+            return tokenize(self.tokenizer, question_text, formatted["answer"])
+
+    train_dataset = ChatFormattedDataset(llm.tokenizer, train_data, format_example)
 
     # Set up training arguments with better settings
     training_args = TrainingArguments(
