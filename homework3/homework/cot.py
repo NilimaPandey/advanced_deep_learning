@@ -1,30 +1,33 @@
+# cot.py - IMPROVED VERSION
 from .base_llm import BaseLLM
 
 
 class CoTModel(BaseLLM):
     def format_prompt(self, question: str) -> str:
         """
-        BEST PERFORMING VERSION - 6 examples, short clear format
-        This usually gets 20-30% accuracy (12-18 points)
+        IMPROVED VERSION - Better examples, clearer reasoning format
         """
         messages = [
-            {"role": "user", "content": "How many g in 2 kg?"},
-            {"role": "assistant", "content": "2 kg = 2 * 1000 = 2000 g. <answer>2000</answer>"},
+            {"role": "user", "content": "How many grams in 2 kilograms?"},
+            {"role": "assistant", "content": "Let's think step by step. We know that 1 kg = 1000 g. So 2 kg = 2 × 1000 = 2000 grams. Therefore, the answer is <answer>2000</answer>"},
 
-            {"role": "user", "content": "How many cm in 5 m?"},
-            {"role": "assistant", "content": "5 m = 5 * 100 = 500 cm. <answer>500</answer>"},
+            {"role": "user", "content": "How many centimeters in 5 meters?"},
+            {"role": "assistant", "content": "Let's think step by step. We know that 1 m = 100 cm. So 5 m = 5 × 100 = 500 centimeters. Therefore, the answer is <answer>500</answer>"},
 
-            {"role": "user", "content": "How many m in 3 km?"},
-            {"role": "assistant", "content": "3 km = 3 * 1000 = 3000 m. <answer>3000</answer>"},
+            {"role": "user", "content": "How many meters in 3 kilometers?"},
+            {"role": "assistant", "content": "Let's think step by step. We know that 1 km = 1000 m. So 3 km = 3 × 1000 = 3000 meters. Therefore, the answer is <answer>3000</answer>"},
 
-            {"role": "user", "content": "How many mm in 4 cm?"},
-            {"role": "assistant", "content": "4 cm = 4 * 10 = 40 mm. <answer>40</answer>"},
+            {"role": "user", "content": "How many millimeters in 7 centimeters?"},
+            {"role": "assistant", "content": "Let's think step by step. We know that 1 cm = 10 mm. So 7 cm = 7 × 10 = 70 millimeters. Therefore, the answer is <answer>70</answer>"},
 
-            {"role": "user", "content": "How many inches in 2 feet?"},
-            {"role": "assistant", "content": "2 feet = 2 * 12 = 24 inches. <answer>24</answer>"},
+            {"role": "user", "content": "How many inches in 3 feet?"},
+            {"role": "assistant", "content": "Let's think step by step. We know that 1 foot = 12 inches. So 3 feet = 3 × 12 = 36 inches. Therefore, the answer is <answer>36</answer>"},
 
-            {"role": "user", "content": "How many feet in 5 yards?"},
-            {"role": "assistant", "content": "5 yards = 5 * 3 = 15 feet. <answer>15</answer>"},
+            {"role": "user", "content": "How many feet in 4 yards?"},
+            {"role": "assistant", "content": "Let's think step by step. We know that 1 yard = 3 feet. So 4 yards = 4 × 3 = 12 feet. Therefore, the answer is <answer>12</answer>"},
+
+            {"role": "user", "content": "How many milliliters in 2 liters?"},
+            {"role": "assistant", "content": "Let's think step by step. We know that 1 liter = 1000 ml. So 2 liters = 2 × 1000 = 2000 milliliters. Therefore, the answer is <answer>2000</answer>"},
 
             {"role": "user", "content": question}
         ]
@@ -32,22 +35,3 @@ class CoTModel(BaseLLM):
         return self.tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True
         )
-
-
-def load() -> CoTModel:
-    return CoTModel()
-
-
-def test_model():
-    from .data import Dataset, benchmark
-
-    testset = Dataset("valid")
-    model = CoTModel()
-    benchmark_result = benchmark(model, testset, 100)
-    print(f"{benchmark_result.accuracy=}  {benchmark_result.answer_rate=}")
-
-
-if __name__ == "__main__":
-    from fire import Fire
-
-    Fire({"test": test_model, "load": load})
