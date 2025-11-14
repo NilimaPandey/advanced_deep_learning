@@ -125,10 +125,10 @@ def train_model(
     # Load base model with SFT formatting
     llm = SFTModel()
 
-    # Configure LoRA with proven settings
+    # Configure LoRA with smaller rank to keep size down
     lora_config = LoraConfig(
-        r=12,  # Good balance between capacity and size
-        lora_alpha=48,  # 4x the rank
+        r=8,  # Reduced to keep under 50MB
+        lora_alpha=32,  # 4x the rank
         target_modules="all-linear",
         lora_dropout=0.05,
         bias="none",

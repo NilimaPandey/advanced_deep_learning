@@ -49,10 +49,10 @@ def train_model(
     # Load base model
     llm = BaseLLM()
 
-    # Configure LoRA with good capacity (larger than SFT, under 50MB total)
+    # Configure LoRA with smaller rank to keep total under 50MB
     lora_config = LoraConfig(
-        r=20,  # Increased for better capacity
-        lora_alpha=80,  # 4x the rank
+        r=12,  # Reduced from 20 to save space
+        lora_alpha=48,  # 4x the rank
         target_modules="all-linear",
         lora_dropout=0.05,
         bias="none",
