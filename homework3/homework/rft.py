@@ -1,8 +1,8 @@
 from .base_llm import BaseLLM
-from .sft import test_model
+from .sft import SFTModel, test_model
 
 
-def load() -> BaseLLM:
+def load() -> SFTModel:
     from pathlib import Path
 
     from peft import PeftModel
@@ -10,7 +10,8 @@ def load() -> BaseLLM:
     model_name = "rft_model"
     model_path = Path(__file__).parent / model_name
 
-    llm = BaseLLM()
+    # CRITICAL: Use SFTModel to get chat template formatting
+    llm = SFTModel()
     llm.model = PeftModel.from_pretrained(llm.model, model_path).to(llm.device)
     llm.model.eval()
 
@@ -20,9 +21,9 @@ def load() -> BaseLLM:
 def train_model(
         output_dir: str = "homework/rft_model",
         generated_data_path: str = "data/rft.json",
-        num_train_epochs: int = 10,  # Much more training
-        per_device_train_batch_size: int = 16,  # Smaller batches for stability
-        learning_rate: float = 1e-4,  # Lower learning rate for fine control
+        num_train_epochs: int = 10,
+        per_device_train_batch_size: int = 16,
+        learning_rate: float = 1e-4,
         **kwargs,
 ):
     """
@@ -44,15 +45,15 @@ def train_model(
     from peft import LoraConfig, get_peft_model
     from transformers import Trainer, TrainingArguments
 
-    from .sft import tokenize
+    from .sft import tokenize, SFTModel
 
-    # Load base model
-    llm = BaseLLM()
+    # CRITICAL: Use SFTModel for training to match inference
+    llm = SFTModel()
 
     # Configure LoRA - larger rank for RFT since we have good data
     lora_config = LoraConfig(
-        r=16,  # Increased for better capacity
-        lora_alpha=64,  # 4x the rank
+        r=16,
+        lora_alpha=64,
         target_modules="all-linear",
         lora_dropout=0.05,
         bias="none",
@@ -88,8 +89,7 @@ def train_model(
         print("This is too few. You should have at least 500-700 samples.")
         print("Regenerate with: python -m homework.datagen data/rft.json --oversample 30 --temperature 0.9")
 
-    # Create a custom dataset class for RFT
-    # Data format from datagen: [question, answer, reasoning]
+    # Create RFT dataset - format data with chat template
     class RFTDataset:
         def __init__(self, tokenizer, data):
             self.tokenizer = tokenizer
@@ -104,13 +104,21 @@ def train_model(
             question = item[0]
             reasoning = item[2]  # Full response including <answer> tags
 
-            # Tokenize the question and reasoning
-            return tokenize(self.tokenizer, question, reasoning)
+            # Apply chat template to question (to match inference format)
+            messages = [{"role": "user", "content": question}]
+            question_formatted = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+
+            # Tokenize the formatted question and reasoning
+            return tokenize(self.tokenizer, question_formatted, reasoning)
 
     # Create dataset
     train_dataset = RFTDataset(llm.tokenizer, generated_data)
 
-    # Set up training arguments with better settings
+    # Set up training arguments
     training_args = TrainingArguments(
         output_dir=output_dir,
         logging_dir=output_dir,
