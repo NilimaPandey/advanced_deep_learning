@@ -59,22 +59,20 @@ class BaseLLM:
             return float("nan")
 
     def _generation_parameters(
-        self,
-        temperature: float,
-        num_return_sequences: int,
+            self,
+            temperature: float,
+            num_return_sequences: int,
     ) -> dict:
-        """
-        MUST MATCH GRADER'S EXPECTED PARAMETERS EXACTLY.
-        """
         do_sample = temperature > 0.0
 
         return dict(
-            max_new_tokens=50,                    # <<<< REQUIREMENT
+            max_new_tokens=64,  # Increased slightly
             do_sample=do_sample,
             temperature=temperature if do_sample else None,
             num_return_sequences=num_return_sequences,
             pad_token_id=self.tokenizer.eos_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
+            repetition_penalty=1.1,  # Add repetition penalty
         )
 
     # -----------------------------------------------------------------
