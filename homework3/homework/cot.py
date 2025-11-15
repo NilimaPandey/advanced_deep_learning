@@ -4,33 +4,23 @@ from .base_llm import BaseLLM
 class CoTModel(BaseLLM):
     def format_prompt(self, question: str) -> str:
         """
-        OPTIMIZED VERSION - Shorter, clearer examples that work with smaller models
-        Focus on unit conversion patterns the model can easily learn
+        SIMPLE VERSION - Minimal examples for smaller models
         """
         messages = [
-            {"role": "user", "content": "How many grams in 2 kg?"},
-            {"role": "assistant", "content": "2 kg × 1000 = 2000 g. <answer>2000</answer>"},
+            {"role": "user", "content": "How many g in 2 kg?"},
+            {"role": "assistant", "content": "2000 g. <answer>2000</answer>"},
 
             {"role": "user", "content": "How many cm in 5 m?"},
-            {"role": "assistant", "content": "5 m × 100 = 500 cm. <answer>500</answer>"},
+            {"role": "assistant", "content": "500 cm. <answer>500</answer>"},
 
             {"role": "user", "content": "How many m in 3 km?"},
-            {"role": "assistant", "content": "3 km × 1000 = 3000 m. <answer>3000</answer>"},
+            {"role": "assistant", "content": "3000 m. <answer>3000</answer>"},
 
-            {"role": "user", "content": "How many mm in 4 cm?"},
-            {"role": "assistant", "content": "4 cm × 10 = 40 mm. <answer>40</answer>"},
+            {"role": "user", "content": "How many mm in 7 cm?"},
+            {"role": "assistant", "content": "70 mm. <answer>70</answer>"},
 
             {"role": "user", "content": "How many inches in 2 feet?"},
-            {"role": "assistant", "content": "2 ft × 12 = 24 inches. <answer>24</answer>"},
-
-            {"role": "user", "content": "How many feet in 3 yards?"},
-            {"role": "assistant", "content": "3 yd × 3 = 9 feet. <answer>9</answer>"},
-
-            {"role": "user", "content": "How many ml in 1.5 liters?"},
-            {"role": "assistant", "content": "1.5 L × 1000 = 1500 ml. <answer>1500</answer>"},
-
-            {"role": "user", "content": "How many ounces in 2 pounds?"},
-            {"role": "assistant", "content": "2 lb × 16 = 32 oz. <answer>32</answer>"},
+            {"role": "assistant", "content": "24 inches. <answer>24</answer>"},
 
             {"role": "user", "content": question}
         ]
