@@ -20,9 +20,9 @@ def load() -> BaseLLM:
 def train_model(
         output_dir: str = "homework/rft_model",
         generated_data_path: str = "data/rft.json",
-        num_train_epochs: int = 5,  # Increased for better learning
-        per_device_train_batch_size: int = 32,
-        learning_rate: float = 3e-4,  # Slightly higher
+        num_train_epochs: int = 10,  # Much more training
+        per_device_train_batch_size: int = 16,  # Smaller batches for stability
+        learning_rate: float = 1e-4,  # Lower learning rate for fine control
         **kwargs,
 ):
     """
@@ -49,10 +49,10 @@ def train_model(
     # Load base model
     llm = BaseLLM()
 
-    # Configure LoRA with smaller rank to keep total under 50MB
+    # Configure LoRA - larger rank for RFT since we have good data
     lora_config = LoraConfig(
-        r=12,  # Reduced from 20 to save space
-        lora_alpha=48,  # 4x the rank
+        r=16,  # Increased for better capacity
+        lora_alpha=64,  # 4x the rank
         target_modules="all-linear",
         lora_dropout=0.05,
         bias="none",
