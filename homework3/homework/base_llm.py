@@ -66,13 +66,14 @@ class BaseLLM:
         do_sample = temperature > 0.0
 
         return dict(
-            max_new_tokens=64,  # Increased slightly
+            max_new_tokens=128,  # Increased for longer reasoning
             do_sample=do_sample,
-            temperature=temperature if do_sample else None,
+            temperature=temperature if do_sample else 0.7,  # Even when not sampling, use some temp
             num_return_sequences=num_return_sequences,
             pad_token_id=self.tokenizer.eos_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
-            repetition_penalty=1.1,  # Add repetition penalty
+            repetition_penalty=1.05,  # Reduced penalty
+            no_repeat_ngram_size=3,  # Prevent repeating 3-grams
         )
 
     # -----------------------------------------------------------------

@@ -4,23 +4,32 @@ from .base_llm import BaseLLM
 class CoTModel(BaseLLM):
     def format_prompt(self, question: str) -> str:
         """
-        SIMPLE VERSION - Minimal examples for smaller models
+        HIGHLY OPTIMIZED VERSION - Tested patterns for unit conversion
         """
         messages = [
-            {"role": "user", "content": "How many g in 2 kg?"},
-            {"role": "assistant", "content": "2000 g. <answer>2000</answer>"},
+            {"role": "user", "content": "Convert 2 kg to g"},
+            {"role": "assistant", "content": "2 kg = 2 × 1000 = 2000 g <answer>2000</answer>"},
 
-            {"role": "user", "content": "How many cm in 5 m?"},
-            {"role": "assistant", "content": "500 cm. <answer>500</answer>"},
+            {"role": "user", "content": "Convert 5 m to cm"},
+            {"role": "assistant", "content": "5 m = 5 × 100 = 500 cm <answer>500</answer>"},
 
-            {"role": "user", "content": "How many m in 3 km?"},
-            {"role": "assistant", "content": "3000 m. <answer>3000</answer>"},
+            {"role": "user", "content": "Convert 3 km to m"},
+            {"role": "assistant", "content": "3 km = 3 × 1000 = 3000 m <answer>3000</answer>"},
 
-            {"role": "user", "content": "How many mm in 7 cm?"},
-            {"role": "assistant", "content": "70 mm. <answer>70</answer>"},
+            {"role": "user", "content": "Convert 4 cm to mm"},
+            {"role": "assistant", "content": "4 cm = 4 × 10 = 40 mm <answer>40</answer>"},
 
-            {"role": "user", "content": "How many inches in 2 feet?"},
-            {"role": "assistant", "content": "24 inches. <answer>24</answer>"},
+            {"role": "user", "content": "Convert 2 feet to inches"},
+            {"role": "assistant", "content": "2 feet = 2 × 12 = 24 inches <answer>24</answer>"},
+
+            {"role": "user", "content": "Convert 1.5 liters to ml"},
+            {"role": "assistant", "content": "1.5 liters = 1.5 × 1000 = 1500 ml <answer>1500</answer>"},
+
+            {"role": "user", "content": "Convert 3 yards to feet"},
+            {"role": "assistant", "content": "3 yards = 3 × 3 = 9 feet <answer>9</answer>"},
+
+            {"role": "user", "content": "Convert 2 pounds to ounces"},
+            {"role": "assistant", "content": "2 pounds = 2 × 16 = 32 ounces <answer>32</answer>"},
 
             {"role": "user", "content": question}
         ]
