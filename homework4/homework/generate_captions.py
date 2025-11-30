@@ -40,8 +40,8 @@ def create(stk_root, output_file):
         caption = build_caption(info)
 
         for img in image_files:
-            img_rel = os.path.relpath(img, start=stk_root)
-            all_caps.append({"image_file": img_rel, "caption": caption})
+            image_file = os.path.basename(img)   # <-- IMPORTANT FIX
+            all_caps.append({"image_file": image_file, "caption": caption})
 
     random.shuffle(all_caps)
 

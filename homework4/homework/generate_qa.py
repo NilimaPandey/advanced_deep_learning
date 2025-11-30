@@ -1,11 +1,9 @@
 import json, glob, os, random
 from pathlib import Path
 
-
 def load_info(info_path):
     with open(info_path, "r") as f:
         return json.load(f)
-
 
 def generate_qa_for_info(info, image_file):
     qas = []
@@ -67,9 +65,8 @@ def create(stk_root, output_file):
         info = load_info(info_file)
 
         for img in image_files:
-            # Convert absolute → relative path
-            img_rel = os.path.relpath(img, start=stk_root)
-            all_qas.extend(generate_qa_for_info(info, img_rel))
+            image_file = os.path.basename(img)    # <-- IMPORTANT FIX
+            all_qas.extend(generate_qa_for_info(info, image_file))
 
     random.shuffle(all_qas)
 
@@ -84,5 +81,4 @@ def create(stk_root, output_file):
 
 if __name__ == "__main__":
     import fire
-
     fire.Fire({"create": create})
