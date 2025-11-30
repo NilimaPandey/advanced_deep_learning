@@ -1,63 +1,74 @@
+import json, glob, os, random
 from pathlib import Path
 
-import fire
-from matplotlib import pyplot as plt
-
-from .generate_qa import draw_detections, extract_frame_info
-
-
-def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_height: int = 100) -> list:
-    """
-    Generate caption for a specific view.
-    """
-    # 1. Ego car
-    # {kart_name} is the ego car.
-
-    # 2. Counting
-    # There are {num_karts} karts in the scenario.
-
-    # 3. Track name
-    # The track is {track_name}.
-
-    # 4. Relative position
-    # {kart_name} is {position} of the ego car.
-
-    raise NotImplementedError("Not implemented")
-
-
-def check_caption(info_file: str, view_index: int):
-    captions = generate_caption(info_file, view_index)
-
-    print("\nCaption:")
-    print("-" * 50)
-    for i, caption in enumerate(captions):
-        print(f"{i + 1}. {caption}")
-        print("-" * 50)
-
-    info_path = Path(info_file)
-    base_name = info_path.stem.replace("_info", "")
-    image_file = list(info_path.parent.glob(f"{base_name}_{view_index:02d}_im.jpg"))[0]
-
-    annotated_image = draw_detections(str(image_file), info_file)
-
-    plt.figure(figsize=(12, 8))
-    plt.imshow(annotated_image)
-    plt.axis("off")
-    plt.title(f"Frame {extract_frame_info(str(image_file))[0]}, View {view_index}")
-    plt.show()
-
-
 """
-Usage Example: Visualize QA pairs for a specific file and view:
-   python generate_captions.py check --info_file ../data/valid/00000_info.json --view_index 0
+Caption generation for CLIP.
 
-You probably need to add additional commands to Fire below.
+Works with SuperTuxKart dataset layout:
+
+    stk_root/
+        data/
+            train/
+                00000_info.json
+                00000_00_im.jpg
+                00000_01_im.jpg
+                ...
+
+Produces ~1 caption per image.
 """
 
+def load_info(path):
+    with open(path, "r") as f:
+        return json.load(f)
 
-def main():
-    fire.Fire({"check": check_caption})
+def build_caption(info):
+    parts = []
+
+    if "track" in info:
+        parts.append(f"A scene on the {info['track']} track")
+
+    if "speed" in info:
+        parts.append(f"moving at speed {info['speed']}")
+
+    if "objects" in info and len(info["objects"]) > 0:
+        objs = ", ".join(info["objects"])
+        parts.append(f"with objects {objs}")
+
+    if "opponents" in info:
+        parts.append(f"and {len(info['opponents'])} opponents")
+
+    if "weapon" in info and info["weapon"]:
+        parts.append(f"holding a {info['weapon']} weapon")
+
+    return ", ".join(parts)
+
+def create(stk_root, output_file):
+    train_dir = os.path.join(stk_root, "data", "train")
+    info_files = sorted(glob.glob(os.path.join(train_dir, "*_info.json")))
+
+    all_caps = []
+
+    for info_file in info_files:
+        base = info_file.replace("_info.json", "")
+        image_files = sorted(glob.glob(base + "_*_im.jpg"))
+
+        info = load_info(info_file)
+        caption = build_caption(info)
+
+        for img in image_files:
+            all_caps.append({"image_path": img, "caption": caption})
+
+    random.shuffle(all_caps)
+
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_file, "w") as f:
+        json.dump(all_caps, f, indent=2)
+
+    print(f"Generated {len(all_caps)} captions → {output_file}")
 
 
 if __name__ == "__main__":
-    main()
+    import fire
+    fire.Fire({"create": create})
