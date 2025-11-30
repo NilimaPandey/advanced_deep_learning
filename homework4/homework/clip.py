@@ -101,8 +101,17 @@ class CLIP(nn.Module):
         super().__init__()
         self.vision_encoder = vision_encoder
         self.text_encoder = text_encoder
-        # TODO: implement the rest components
-        raise NotImplementedError("Not implemented")
+
+        # Hidden dimensions from encoders
+        vision_dim = vision_encoder.config.hidden_size
+        text_dim = text_encoder.config.hidden_size
+
+        # Projection layers (learnable)
+        self.vision_proj = nn.Linear(vision_dim, proj_dim, bias=False)
+        self.text_proj = nn.Linear(text_dim, proj_dim, bias=False)
+
+        # Trainable temperature parameter
+        self.logit_scale = nn.Parameter(torch.log(torch.tensor(1.0 / temperature)))
 
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
         return self.vision_encoder(image)
@@ -161,26 +170,32 @@ class CLIP(nn.Module):
         self.text_encoder.get_input_embeddings().register_forward_hook(make_inputs_require_grads)
 
     def forward(
-        self,
-        pixel_values: torch.Tensor,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor = None,
-        labels: torch.Tensor = None,
-        **kwargs,
+            self,
+            pixel_values: torch.Tensor,
+            input_ids: torch.Tensor,
+            attention_mask: torch.Tensor = None,
+            labels: torch.Tensor = None,
+            **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Forward pass for the CLIP model.
-        Args:
-            pixel_values: The pixel values of the image.
-            input_ids: The input ids of the text.
-            attention_mask: The attention mask of the text.
-            labels: The labels for the text features.
-            (NOTE: you don't need to use the variable `labels`, this is just for compatibility with the Trainer class)
-            (Hint: refer to returned values of the __getitem__ method in the CaptionDatasetForTraining class)
-        Returns:
-            TODO: think about the what values should be returned
-        """
-        raise NotImplementedError("Not implemented")
+
+        # Encode image — take CLS token of sequence output
+        vision_out = self.vision_encoder(pixel_values)[0][:, 0]
+        vision_feature = self.vision_proj(vision_out)
+        vision_feature = vision_feature / vision_feature.norm(dim=-1, keepdim=True)
+
+        # Encode text — also take CLS token
+        text_out = self.text_encoder(
+            input_ids=input_ids,
+            attention_mask=attention_mask
+        )[0][:, 0]
+        text_feature = self.text_proj(text_out)
+        text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)
+
+        # Similarity logits
+        logit_scale = self.logit_scale.exp()
+        logits = logit_scale * (vision_feature @ text_feature.T)
+
+        return vision_feature, text_feature, logits
 
 
 def compute_clip_loss(
@@ -188,18 +203,19 @@ def compute_clip_loss(
     labels: torch.Tensor,
     num_items_in_batch: int | None = None,
 ) -> torch.Tensor:
-    """
-    Compute the loss for the CLIP model.
-    Args:
-        outputs: A tuple containing the outputs of CLIP.forward().
-        labels: The labels for the text features.
-        (NOTE: you don't need to use the variable `labels`, this is just for compatibility with the Trainer class)
-        num_items_in_batch: The number of items in the batch.
-        (NOTE: you don't need to use the variable `num_items_in_batch`, this is just for compatibility with Trainer)
-    Returns:
-        The loss for the CLIP model.
-    """
-    raise NotImplementedError("Not implemented")
+
+    image_features, text_features, logits = outputs
+    batch_size = logits.shape[0]
+
+    # Correct-matching indices
+    targets = torch.arange(batch_size, device=logits.device)
+
+    # Symmetric CLIP loss
+    loss_i = nn.functional.cross_entropy(logits, targets)
+    loss_t = nn.functional.cross_entropy(logits.T, targets)
+
+    return (loss_i + loss_t) / 2
+
 
 
 def get_target_modules_for_lora(model: nn.Module) -> list[str]:
