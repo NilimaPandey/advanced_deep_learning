@@ -1,22 +1,6 @@
 import json, glob, os, random
 from pathlib import Path
 
-"""
-Caption generation for CLIP.
-
-Works with SuperTuxKart dataset layout:
-
-    stk_root/
-        data/
-            train/
-                00000_info.json
-                00000_00_im.jpg
-                00000_01_im.jpg
-                ...
-
-Produces ~1 caption per image.
-"""
-
 def load_info(path):
     with open(path, "r") as f:
         return json.load(f)
@@ -56,14 +40,15 @@ def create(stk_root, output_file):
         caption = build_caption(info)
 
         for img in image_files:
-            all_caps.append({"image_path": img, "caption": caption})
+            img_rel = os.path.relpath(img, start=stk_root)
+            all_caps.append({"image_file": img_rel, "caption": caption})
 
     random.shuffle(all_caps)
 
-    output_path = Path(output_file)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    out = Path(output_file)
+    out.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_file, "w") as f:
+    with open(out, "w") as f:
         json.dump(all_caps, f, indent=2)
 
     print(f"Generated {len(all_caps)} captions → {output_file}")
