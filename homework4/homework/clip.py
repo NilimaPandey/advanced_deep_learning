@@ -243,6 +243,9 @@ def train(
 ):
     vlm = BaseVLM()
 
+    if data_dir is None:
+        data_dir = Path(__file__).parent.parent / "data"
+
     output_dir = Path(__file__).parent / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
