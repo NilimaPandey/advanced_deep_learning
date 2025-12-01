@@ -7,14 +7,14 @@ def load_info(info_path):
 
 def generate_qa_for_info(info, image_path):
     return [
-        {"image_path": image_path, "question": "What track is this?", "answer": info.get("track", "")},
-        {"image_path": image_path, "question": "How fast am I moving?", "answer": str(info.get("speed", ""))},
-        {"image_path": image_path, "question": "How many opponents do I see?", "answer": str(len(info.get("opponents", [])))}
+        {"image_file": image_path, "question": "What track is this?", "answer": info.get("track", "")},
+        {"image_file": image_path, "question": "How fast am I moving?", "answer": str(info.get("speed", ""))},
+        {"image_file": image_path, "question": "How many opponents do I see?", "answer": str(len(info.get("opponents", [])))}
     ] + [
-        {"image_path": image_path, "question": f"Do I see a {obj}?", "answer": "yes"}
+        {"image_file": image_path, "question": f"Do I see a {obj}?", "answer": "yes"}
         for obj in info.get("objects", [])
     ] + (
-        [{"image_path": image_path, "question": "What weapon do I have?", "answer": info["weapon"]}]
+        [{"image_file": image_path, "question": "What weapon do I have?", "answer": info["weapon"]}]
         if info.get("weapon") else []
     )
 
