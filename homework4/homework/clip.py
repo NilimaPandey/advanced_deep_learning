@@ -249,7 +249,7 @@ def train(
     output_dir = Path(__file__).parent / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("CLIP loading captions from:", data_dir)
+    print("CLIP loading captions from:", data_dir / "train/")
 
     # Initialize TensorBoard writer
     tensorboard_dir = output_dir / "tensorboard"

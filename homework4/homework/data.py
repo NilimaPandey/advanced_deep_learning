@@ -82,7 +82,8 @@ class CaptionDataset:
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         caption = self.captions[idx]
-        image_path = os.path.join(self.data_dir, caption["image_file"])
+        image_path = os.path.join(self.data_dir, "train", caption["image_file"])
+
         return {
             "image_path": image_path,
             "caption": caption["caption"],
