@@ -235,7 +235,7 @@ def get_target_modules_for_lora(model: nn.Module) -> list[str]:
 def train(
     data_dir: Path | None = None,
     output_dir: str = "clip",
-    num_train_epochs: float = 0.05,  # for debugging purpose, increase this once the dry run works
+    num_train_epochs: float = 1000,  # for debugging purpose, increase this once the dry run works
     per_device_train_batch_size: int = 1024,
     gradient_accumulation_steps: int = 1,
     learning_rate: float = 5e-4,
@@ -249,7 +249,7 @@ def train(
     output_dir = Path(__file__).parent / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("CLIP loading captions from:", data_dir / "train/captions.json")
+    #print("CLIP loading captions from:", data_dir / "train/captions.json")
 
     # Initialize TensorBoard writer
     tensorboard_dir = output_dir / "tensorboard"
@@ -314,6 +314,8 @@ def train(
     # save model
     trainer.save_model(output_dir)
     model.model.save_pretrained(output_dir)
+
+
 
     writer.close()
 
