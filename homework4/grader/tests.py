@@ -132,6 +132,7 @@ class CLIPGrader(Grader):
             attention_mask = text_inputs["attention_mask"].to(self.device)
             vision_feature, text_feature, _ = clip(pixel_values, input_ids, attention_mask)
             prediction = torch.matmul(vision_feature, text_feature.T).argmax(dim=-1)
+            self.logger.info("Testing accuracy is: %f", prediction) #me
             if prediction == pair["correct_index"]:
                 correct_count += 1
             total_count += 1
