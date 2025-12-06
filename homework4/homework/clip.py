@@ -18,7 +18,7 @@ processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 
-def load(model_name: str = "clip_model"):
+def load_clip(model_name: str = "clip_model"):
     from pathlib import Path
 
     from peft import PeftModel
