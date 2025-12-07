@@ -17,6 +17,11 @@ processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
 
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
+import logging
+
+debug_logger = logging.getLogger("CLIP_DEBUG")
+debug_logger.setLevel(logging.INFO)
+debug_logger.addHandler(logging.StreamHandler())
 
 class ClipWrapper:
     def __init__(self, model):
@@ -29,6 +34,10 @@ def load_clip(model_name: str = "clip_model"):
     from peft import PeftModel
 
     model_path = Path(__file__).parent / model_name
+    debug_logger.info("===== load_clip START =====")
+
+    ckpt_dir = Path(__file__).parent / model_name
+    debug_logger.info(f"Looking for checkpoint in: {ckpt_dir}")
 
     vlm = BaseVLM()
     vision_encoder = vlm.model.model.vision_model
