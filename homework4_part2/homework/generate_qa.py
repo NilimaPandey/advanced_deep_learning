@@ -197,8 +197,13 @@ def extract_kart_objects(
         center_x = (x1_scaled + x2_scaled) / 2
         center_y = (y1_scaled + y2_scaled) / 2
 
-        # Get kart name
-        kart_name = info["kart_names"].get(str(track_id), f"kart_{track_id}")
+        # Get kart name from karts array (maps track_id to kart name by index)
+        if "karts" in info and 0 <= track_id < len(info["karts"]):
+            kart_name = info["karts"][track_id]
+        elif "kart_names" in info and str(track_id) in info["kart_names"]:
+            kart_name = info["kart_names"][str(track_id)]
+        else:
+            kart_name = f"kart_{track_id}"
 
         kart_objects.append({
             "instance_id": track_id,
@@ -229,6 +234,7 @@ def extract_track_info(info_path: str) -> str:
     with open(info_path) as f:
         info = json.load(f)
 
+    # Handle missing track field
     return info.get("track", "unknown")
 
 
