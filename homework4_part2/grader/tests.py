@@ -95,6 +95,10 @@ class CLIPGrader(Grader):
 
     def load_model(self) -> torch.nn.Module:
         clip = getattr(self.module, f"load_{self.model_name}")()
+        debug_logger.info("===== load_clip START =====")
+
+        ckpt_dir = Path(__file__).parent / model_name
+        debug_logger.info(f"Looking for checkpoint in: {ckpt_dir}")
         clip.model.eval()
         model_size_check(clip.model)
         return clip
@@ -132,6 +136,7 @@ class CLIPGrader(Grader):
             attention_mask = text_inputs["attention_mask"].to(self.device)
             vision_feature, text_feature, _ = clip(pixel_values, input_ids, attention_mask)
             prediction = torch.matmul(vision_feature, text_feature.T).argmax(dim=-1)
+
             if prediction == pair["correct_index"]:
                 correct_count += 1
             total_count += 1
