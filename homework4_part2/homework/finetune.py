@@ -30,6 +30,11 @@ def load(model_name: str = "vlm_model") -> BaseVLM:
     return vlm
 
 
+def load_vlm(model_name: str = "vlm_sft") -> BaseVLM:
+    """Load VLM model - required by grader"""
+    return load(model_name)
+
+
 def custom_data_collator(features: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
     # Get max sequence length
     max_length = max(f["input_ids"].shape[0] for f in features)

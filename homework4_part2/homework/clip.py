@@ -402,6 +402,11 @@ def test(ckpt_path: str, val_dataset: str = "valid_grader"):
     print(f"Accuracy: {correct_count / total_count}")
 
 
+def load_clip(model_name: str = "clip_model"):
+    """Load CLIP model - required by grader"""
+    return load(model_name)
+
+
 def main():
     from fire import Fire
 
