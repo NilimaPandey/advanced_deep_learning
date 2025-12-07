@@ -3,26 +3,55 @@ from pathlib import Path
 import fire
 from matplotlib import pyplot as plt
 
-from .generate_qa import draw_detections, extract_frame_info
+from .generate_qa import draw_detections, extract_frame_info, extract_kart_objects, extract_track_info
 
 
 def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_height: int = 100) -> list:
     """
     Generate caption for a specific view.
     """
+    kart_objects = extract_kart_objects(info_path, view_index, img_width, img_height)
+    track_name = extract_track_info(info_path)
+
+    captions = []
+
+    # Find ego car
+    ego_car = next((k for k in kart_objects if k["is_center_kart"]), None)
+
+    if not ego_car:
+        return captions
+
     # 1. Ego car
-    # {kart_name} is the ego car.
+    captions.append(f"{ego_car['kart_name']} is the ego car.")
 
     # 2. Counting
-    # There are {num_karts} karts in the scenario.
+    captions.append(f"There are {len(kart_objects)} karts in the scenario.")
 
     # 3. Track name
-    # The track is {track_name}.
+    captions.append(f"The track is {track_name}.")
 
-    # 4. Relative position
-    # {kart_name} is {position} of the ego car.
+    # 4. Relative position for each non-ego kart
+    for kart in kart_objects:
+        if kart["is_center_kart"]:
+            continue
 
-    raise NotImplementedError("Not implemented")
+        kart_name = kart["kart_name"]
+        cx, cy = kart["center"]
+
+        # Determine position
+        if cx < ego_car["center"][0]:
+            lr_position = "left"
+        else:
+            lr_position = "right"
+
+        if cy < ego_car["center"][1]:
+            fb_position = "in front of"
+        else:
+            fb_position = "behind"
+
+        captions.append(f"{kart_name} is {lr_position} and {fb_position} the ego car.")
+
+    return captions
 
 
 def check_caption(info_file: str, view_index: int):

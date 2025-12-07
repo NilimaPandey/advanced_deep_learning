@@ -3,6 +3,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision as tv
 from peft import LoraConfig, TaskType, get_peft_model
 from PIL import Image
@@ -96,19 +97,42 @@ class CaptionDatasetForTraining(Dataset):
 
 class CLIP(nn.Module):
     def __init__(
-        self, vision_encoder: nn.Module, text_encoder: nn.Module, proj_dim: int = 64, temperature: float = 0.07
+            self, vision_encoder: nn.Module, text_encoder: nn.Module, proj_dim: int = 64, temperature: float = 0.07
     ):
         super().__init__()
         self.vision_encoder = vision_encoder
         self.text_encoder = text_encoder
-        # TODO: implement the rest components
-        raise NotImplementedError("Not implemented")
+
+        # Get the hidden dimensions from the encoders
+        vision_hidden_dim = vision_encoder.config.hidden_size
+        text_hidden_dim = text_encoder.config.hidden_size
+
+        # Projection layers to map to a common embedding space
+        self.vision_projection = nn.Linear(vision_hidden_dim, proj_dim)
+        self.text_projection = nn.Linear(text_hidden_dim, proj_dim)
+
+        # Learnable temperature parameter
+        self.temperature = nn.Parameter(torch.ones([]) * temperature)
 
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
-        return self.vision_encoder(image)
+        vision_outputs = self.vision_encoder(image)
+        # Get the pooled output (CLS token or pooled representation)
+        vision_features = vision_outputs.last_hidden_state[:, 0, :]  # Use CLS token
+        # Project to common space
+        vision_embeds = self.vision_projection(vision_features)
+        # Normalize
+        vision_embeds = F.normalize(vision_embeds, p=2, dim=-1)
+        return vision_embeds
 
-    def encode_text(self, text: str) -> torch.Tensor:
-        return self.text_encoder(text)
+    def encode_text(self, input_ids: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
+        text_outputs = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
+        # Get the pooled output
+        text_features = text_outputs.last_hidden_state[:, 0, :]  # Use CLS token or first token
+        # Project to common space
+        text_embeds = self.text_projection(text_features)
+        # Normalize
+        text_embeds = F.normalize(text_embeds, p=2, dim=-1)
+        return text_embeds
 
     def save_pretrained(self, save_directory: str, **kwargs):
         """Customize save method, save additional parameters"""
@@ -161,12 +185,12 @@ class CLIP(nn.Module):
         self.text_encoder.get_input_embeddings().register_forward_hook(make_inputs_require_grads)
 
     def forward(
-        self,
-        pixel_values: torch.Tensor,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor = None,
-        labels: torch.Tensor = None,
-        **kwargs,
+            self,
+            pixel_values: torch.Tensor,
+            input_ids: torch.Tensor,
+            attention_mask: torch.Tensor = None,
+            labels: torch.Tensor = None,
+            **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward pass for the CLIP model.
@@ -178,15 +202,23 @@ class CLIP(nn.Module):
             (NOTE: you don't need to use the variable `labels`, this is just for compatibility with the Trainer class)
             (Hint: refer to returned values of the __getitem__ method in the CaptionDatasetForTraining class)
         Returns:
-            TODO: think about the what values should be returned
+            vision_embeds: The normalized vision embeddings
+            text_embeds: The normalized text embeddings
+            temperature: The temperature parameter
         """
-        raise NotImplementedError("Not implemented")
+        # Encode images
+        vision_embeds = self.encode_image(pixel_values)
+
+        # Encode text
+        text_embeds = self.encode_text(input_ids, attention_mask)
+
+        return vision_embeds, text_embeds, self.temperature
 
 
 def compute_clip_loss(
-    outputs: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
-    labels: torch.Tensor,
-    num_items_in_batch: int | None = None,
+        outputs: tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        labels: torch.Tensor,
+        num_items_in_batch: int | None = None,
 ) -> torch.Tensor:
     """
     Compute the loss for the CLIP model.
@@ -199,7 +231,26 @@ def compute_clip_loss(
     Returns:
         The loss for the CLIP model.
     """
-    raise NotImplementedError("Not implemented")
+    vision_embeds, text_embeds, temperature = outputs
+
+    # Compute similarity matrix
+    # vision_embeds: [batch_size, proj_dim]
+    # text_embeds: [batch_size, proj_dim]
+    logits = torch.matmul(vision_embeds, text_embeds.T) / temperature
+
+    # Create labels for contrastive loss
+    # We want to maximize similarity between matching pairs (diagonal)
+    batch_size = vision_embeds.shape[0]
+    target = torch.arange(batch_size, device=vision_embeds.device)
+
+    # Compute cross-entropy loss in both directions
+    loss_i2t = F.cross_entropy(logits, target)
+    loss_t2i = F.cross_entropy(logits.T, target)
+
+    # Average the two losses
+    loss = (loss_i2t + loss_t2i) / 2
+
+    return loss
 
 
 def get_target_modules_for_lora(model: nn.Module) -> list[str]:
@@ -207,9 +258,9 @@ def get_target_modules_for_lora(model: nn.Module) -> list[str]:
     for name, module in model.named_modules():
         # if isinstance(module, nn.Linear) and ("vision_encoder" in name and "projection" not in name):
         if (
-            isinstance(module, nn.Linear)
-            and ("vision_encoder" in name or "text_encoder" in name)
-            and "projection" not in name
+                isinstance(module, nn.Linear)
+                and ("vision_encoder" in name or "text_encoder" in name)
+                and "projection" not in name
         ):
             target_modules.append(name)
 
@@ -217,13 +268,13 @@ def get_target_modules_for_lora(model: nn.Module) -> list[str]:
 
 
 def train(
-    data_dir: Path | None = None,
-    output_dir: str = "clip",
-    num_train_epochs: float = 0.05,  # for debugging purpose, increase this once the dry run works
-    per_device_train_batch_size: int = 1024,
-    gradient_accumulation_steps: int = 1,
-    learning_rate: float = 5e-4,
-    num_workers: int = 16,
+        data_dir: Path | None = None,
+        output_dir: str = "clip",
+        num_train_epochs: float = 0.05,  # for debugging purpose, increase this once the dry run works
+        per_device_train_batch_size: int = 1024,
+        gradient_accumulation_steps: int = 1,
+        learning_rate: float = 5e-4,
+        num_workers: int = 16,
 ):
     vlm = BaseVLM()
 
