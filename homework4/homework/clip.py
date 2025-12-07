@@ -18,6 +18,11 @@ processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 
+class ClipWrapper:
+    def __init__(self, model):
+        self.model = model
+
+
 def load_clip(model_name: str = "clip_model"):
     from pathlib import Path
 
@@ -36,7 +41,7 @@ def load_clip(model_name: str = "clip_model"):
     if device == "cuda":
         clip = clip.to(dtype=torch.bfloat16)
 
-    return clip
+    return ClipWrapper(clip)
 
 
 def clip_data_collator(features: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
