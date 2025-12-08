@@ -8,7 +8,7 @@ from .generate_qa import draw_detections, extract_frame_info, extract_kart_objec
 
 def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_height: int = 100) -> list:
     """
-    Generate unique captions by incorporating image-specific details.
+    Generate SINGLE unique caption per image with maximum specificity.
     """
     import random
     import hashlib
@@ -17,9 +17,7 @@ def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_
     kart_objects = extract_kart_objects(info_path, view_index, img_width, img_height)
     track_name = extract_track_info(info_path)
 
-    # Find ego car
     ego_car = next((k for k in kart_objects if k["is_center_kart"]), None)
-
     if not ego_car:
         return []
 
@@ -27,108 +25,89 @@ def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_
     num_karts = len(kart_objects)
     other_karts = [k for k in kart_objects if not k["is_center_kart"]]
 
-    # Extract frame info for uniqueness
-    info_file = Path(info_path)
-    frame_id = info_file.stem.replace('_info', '')
-
-    # Create unique seed
+    # Unique seed per image
     unique_seed = int(hashlib.md5(f"{info_path}_{view_index}".encode()).hexdigest()[:8], 16)
     rng = random.Random(unique_seed)
 
-    captions = []
+    # Extract frame ID for uniqueness
+    frame_id = Path(info_path).stem.replace('_info', '')
 
-    # VIEW-SPECIFIC descriptions (camera angles make each unique)
-    view_descriptions = {
-        0: ["front view", "forward perspective", "ahead-facing camera", "frontal angle"],
-        1: ["side view", "lateral perspective", "side-facing camera", "profile angle"],
-        2: ["rear view", "back perspective", "rear-facing camera", "behind angle"],
-        3: ["angled view", "diagonal perspective", "corner camera", "oblique angle"]
-    }
+    # Camera view descriptions
+    views = ["front camera", "side camera", "rear camera", "angled camera"]
+    view_desc = views[view_index % 4]
 
-    view_desc = rng.choice(view_descriptions.get(view_index, ["view"]))
-
-    # STRATEGY: Make captions highly specific by including multiple unique elements
-
-    # Template set 1: Include view angle
-    if num_karts == 1:
-        captions.append(rng.choice([
-            f"{view_desc} of {ego_name} racing alone on {track_name}",
-            f"{ego_name} solo on {track_name} from {view_desc}",
-            f"{track_name} track with just {ego_name} visible in {view_desc}",
-            f"empty {track_name}: only {ego_name} shown from {view_desc}",
-        ]))
-    else:
-        captions.append(rng.choice([
-            f"{view_desc} of {ego_name} racing with {len(other_karts)} kart{'s' if len(other_karts) > 1 else ''} on {track_name}",
-            f"{ego_name} and {len(other_karts)} other{'s' if len(other_karts) > 1 else ''} on {track_name} in {view_desc}",
-            f"{track_name} race: {num_karts} karts including {ego_name} from {view_desc}",
-            f"{view_desc} showing {ego_name} among {num_karts} racer{'s' if num_karts > 1 else ''} on {track_name}",
-        ]))
-
-    # Template set 2: Include specific kart positions with view
-    if other_karts:
-        # Pick specific kart with position
-        kart = rng.choice(other_karts)
-        cx, cy = kart['center']
-
-        # Detailed position
-        if cx < ego_car['center'][0] - 20:
-            h_pos = "far left"
-        elif cx < ego_car['center'][0]:
-            h_pos = "left"
-        elif cx > ego_car['center'][0] + 20:
-            h_pos = "far right"
-        else:
-            h_pos = "right"
-
-        if cy < ego_car['center'][1] - 20:
-            v_pos = "far ahead"
-        elif cy < ego_car['center'][1]:
-            v_pos = "ahead"
-        elif cy > ego_car['center'][1] + 20:
-            v_pos = "far behind"
-        else:
-            v_pos = "behind"
-
-        captions.append(rng.choice([
-            f"{kart['kart_name']} positioned {v_pos} and {h_pos} of {ego_name} at {track_name}",
-            f"{ego_name} sees {kart['kart_name']} {v_pos}-{h_pos} on {track_name} ({view_desc})",
-            f"{track_name}: {kart['kart_name']} {v_pos} {h_pos}, {ego_name} center",
-            f"relative to {ego_name}: {kart['kart_name']} is {v_pos} and to the {h_pos}",
-        ]))
-    else:
-        # If solo, use frame-specific descriptions
-        captions.append(rng.choice([
-            f"frame view of {ego_name} alone at {track_name}",
-            f"{ego_name} solo racing captured from {view_desc} on {track_name}",
-            f"single kart scene: {ego_name} on {track_name} circuit",
-            f"{track_name} snapshot showing only {ego_name}",
-        ]))
-
-    # Template set 3: Numeric and specific
-    captions.append(rng.choice([
-        f"scene with {num_karts} kart{'s' if num_karts != 1 else ''}: {ego_name} at {track_name}",
-        f"{track_name} featuring {ego_name} (total racers: {num_karts})",
-        f"kart count {num_karts} on {track_name}, ego is {ego_name}",
-        f"{ego_name} perspective on {track_name} with {num_karts} visible",
-    ]))
-
-    # Template set 4: Action-based with position counts
+    # Count spatial positions
     if other_karts:
         front = len([k for k in other_karts if k['center'][1] < ego_car['center'][1]])
         behind = len([k for k in other_karts if k['center'][1] >= ego_car['center'][1]])
         left = len([k for k in other_karts if k['center'][0] < ego_car['center'][0]])
         right = len([k for k in other_karts if k['center'][0] >= ego_car['center'][0]])
 
-        captions.append(rng.choice([
-            f"{ego_name} on {track_name}: {front} ahead, {behind} behind",
-            f"{track_name} positioning - {ego_name} with {left} left, {right} right",
-            f"{ego_name} racing {track_name} ({front} in front, {behind} trailing)",
-            f"tactical view: {ego_name} at {track_name}, {left}L {right}R",
-        ]))
+        # Pick one specific kart with detailed position
+        picked_kart = rng.choice(other_karts)
+        kx, ky = picked_kart['center']
+        ex, ey = ego_car['center']
 
-    # Only return 2-3 captions to keep total count reasonable
-    return captions[:rng.randint(2, 3)]
+        # Very detailed position
+        h_dist = abs(kx - ex)
+        v_dist = abs(ky - ey)
+
+        if kx < ex - 30:
+            h_pos = "far left"
+        elif kx < ex - 10:
+            h_pos = "left"
+        elif kx > ex + 30:
+            h_pos = "far right"
+        elif kx > ex + 10:
+            h_pos = "right"
+        else:
+            h_pos = "center"
+
+        if ky < ey - 30:
+            v_pos = "far ahead"
+        elif ky < ey - 10:
+            v_pos = "ahead"
+        elif ky > ey + 30:
+            v_pos = "far behind"
+        elif ky > ey + 10:
+            v_pos = "behind"
+        else:
+            v_pos = "level"
+
+    # Generate ONE unique caption using multiple specific details
+    template_choice = rng.randint(0, 9)
+
+    if num_karts == 1:
+        # Solo - include view and track
+        templates = [
+            f"{view_desc} shows {ego_name} racing alone on {track_name}",
+            f"solo {ego_name} kart on {track_name} from {view_desc}",
+            f"{track_name} circuit: only {ego_name} visible via {view_desc}",
+            f"{ego_name} driving solo through {track_name} ({view_desc})",
+            f"empty {track_name} track except {ego_name} in {view_desc}",
+            f"{view_desc} perspective of lone {ego_name} at {track_name}",
+            f"isolated {ego_name} on {track_name} captured by {view_desc}",
+            f"{track_name}: single kart {ego_name} shown from {view_desc}",
+            f"{ego_name} has {track_name} alone as seen from {view_desc}",
+            f"no opponents for {ego_name} on {track_name} in this {view_desc}",
+        ]
+    else:
+        # Multi-kart - include specific positions
+        templates = [
+            f"{view_desc}: {ego_name} on {track_name} with {picked_kart['kart_name']} {v_pos} and {h_pos}",
+            f"{track_name} race - {ego_name} has {front} ahead, {behind} behind (via {view_desc})",
+            f"{ego_name} at {track_name}: {left} to left, {right} to right, total {num_karts} karts",
+            f"from {view_desc}, {ego_name} sees {picked_kart['kart_name']} {v_pos}-{h_pos} on {track_name}",
+            f"{track_name}: {ego_name} racing, {picked_kart['kart_name']} positioned {v_pos} {h_pos}",
+            f"{num_karts} kart race on {track_name} - {ego_name} vs others ({view_desc})",
+            f"{view_desc} of {ego_name} on {track_name}: {front}F {behind}B {left}L {right}R",
+            f"{track_name} - {ego_name} with {picked_kart['kart_name']} {v_pos} and to the {h_pos}",
+            f"tactical {view_desc}: {ego_name} at {track_name}, {num_karts} racers, {front} in front",
+            f"{ego_name} navigates {track_name} ({num_karts} total), {picked_kart['kart_name']} is {v_pos}-{h_pos}",
+        ]
+
+    # Return ONLY ONE caption
+    return [templates[template_choice]]
 
 
 def check_caption(info_file: str, view_index: int):
