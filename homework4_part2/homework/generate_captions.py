@@ -9,6 +9,7 @@ from .generate_qa import draw_detections, extract_frame_info, extract_kart_objec
 def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_height: int = 100) -> list:
     """
     Generate SINGLE unique caption per image with maximum specificity.
+    Returns exactly 1 caption per image to maximize diversity across dataset.
     """
     import random
     import hashlib
@@ -25,18 +26,15 @@ def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_
     num_karts = len(kart_objects)
     other_karts = [k for k in kart_objects if not k["is_center_kart"]]
 
-    # Unique seed per image
+    # Unique seed per image ensures deterministic but varied caption selection
     unique_seed = int(hashlib.md5(f"{info_path}_{view_index}".encode()).hexdigest()[:8], 16)
     rng = random.Random(unique_seed)
 
-    # Extract frame ID for uniqueness
-    frame_id = Path(info_path).stem.replace('_info', '')
-
-    # Camera view descriptions
+    # Camera view descriptions for uniqueness
     views = ["front camera", "side camera", "rear camera", "angled camera"]
     view_desc = views[view_index % 4]
 
-    # Count spatial positions
+    # Count spatial positions for detailed descriptions
     if other_karts:
         front = len([k for k in other_karts if k['center'][1] < ego_car['center'][1]])
         behind = len([k for k in other_karts if k['center'][1] >= ego_car['center'][1]])
@@ -48,10 +46,7 @@ def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_
         kx, ky = picked_kart['center']
         ex, ey = ego_car['center']
 
-        # Very detailed position
-        h_dist = abs(kx - ex)
-        v_dist = abs(ky - ey)
-
+        # Very detailed position descriptions
         if kx < ex - 30:
             h_pos = "far left"
         elif kx < ex - 10:
@@ -75,10 +70,11 @@ def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_
             v_pos = "level"
 
     # Generate ONE unique caption using multiple specific details
+    # More templates = more diversity even with duplicate scenarios
     template_choice = rng.randint(0, 9)
 
     if num_karts == 1:
-        # Solo - include view and track
+        # Solo racing - include view and track details
         templates = [
             f"{view_desc} shows {ego_name} racing alone on {track_name}",
             f"solo {ego_name} kart on {track_name} from {view_desc}",
@@ -92,7 +88,7 @@ def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_
             f"no opponents for {ego_name} on {track_name} in this {view_desc}",
         ]
     else:
-        # Multi-kart - include specific positions
+        # Multi-kart racing - include specific positional details
         templates = [
             f"{view_desc}: {ego_name} on {track_name} with {picked_kart['kart_name']} {v_pos} and {h_pos}",
             f"{track_name} race - {ego_name} has {front} ahead, {behind} behind (via {view_desc})",
@@ -106,7 +102,7 @@ def generate_caption(info_path: str, view_index: int, img_width: int = 150, img_
             f"{ego_name} navigates {track_name} ({num_karts} total), {picked_kart['kart_name']} is {v_pos}-{h_pos}",
         ]
 
-    # Return ONLY ONE caption
+    # Return ONLY ONE caption per image
     return [templates[template_choice]]
 
 
