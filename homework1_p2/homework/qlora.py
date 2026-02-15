@@ -23,10 +23,12 @@ class QLoRALinear(Linear4Bit):
         self.lora_b = torch.nn.Linear(lora_dim, out_features, bias=False, dtype=torch.float32)
         torch.nn.init.kaiming_uniform_(self.lora_a.weight, a=5**0.5)
         torch.nn.init.zeros_(self.lora_b.weight)
+        # Scale factor helps LoRA adapt faster with quantized base (alpha/r)
+        self.lora_scale = 128.0 / lora_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         base_out = super().forward(x)
-        lora_out = self.lora_b(self.lora_a(x.to(torch.float32)))
+        lora_out = self.lora_b(self.lora_a(x.to(torch.float32))) * self.lora_scale
         return base_out + lora_out.to(x.dtype)
 
 
