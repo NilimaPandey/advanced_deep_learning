@@ -4,6 +4,7 @@ from typing import cast
 import numpy as np
 import torch
 from PIL import Image
+import zlib
 
 from .autoregressive import Autoregressive
 from .bsq import Tokenizer
@@ -19,9 +20,9 @@ class Compressor:
         """
         Compress the image into a bytes stream.
 
-        For this assignment, we serialize the tokenizer indices directly as
-        16-bit integers. This already achieves very strong compression given
-        the small token grid.
+        For this assignment, we serialize the tokenizer indices as 16-bit
+        integers and then apply a generic lossless compressor (zlib) to
+        reduce the storage size.
         """
         # x is expected in range [-0.5, 0.5] with shape (H, W, 3)
         if x.dim() == 3:
@@ -35,7 +36,9 @@ class Compressor:
 
         # We know tokens are < 2**codebook_bits (<= 1024), so uint16 is sufficient.
         tokens_np = tokens.detach().cpu().numpy().astype(np.uint16)
-        return tokens_np.tobytes()
+        raw_bytes = tokens_np.tobytes()
+        # Apply lossless compression
+        return zlib.compress(raw_bytes)
 
     def decompress(self, x: bytes) -> torch.Tensor:
         """
@@ -52,8 +55,9 @@ class Compressor:
         dummy_idx = self.tokenizer.encode_index(dummy)
         _, h, w = dummy_idx.shape
 
-        # Reconstruct token indices from bytes
-        tokens_np = np.frombuffer(x, dtype=np.uint16)
+        # Decompress and reconstruct token indices from bytes
+        raw_bytes = zlib.decompress(x)
+        tokens_np = np.frombuffer(raw_bytes, dtype=np.uint16).copy()
         tokens = torch.from_numpy(tokens_np).to(device).long().view(1, h, w)
 
         # Decode tokens back to an image tensor (1, H, W, 3)
