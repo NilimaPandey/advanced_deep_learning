@@ -62,11 +62,29 @@ def train(model_name_or_path: str, epochs: int = 5, batch_size: int = 64):
             return torch.optim.AdamW(self.parameters(), lr=1e-3)
 
         def train_dataloader(self):
+            from .data import DATASET_PATH
+
             dataset = ImageDataset("train")
+            if len(dataset) == 0:
+                raise FileNotFoundError(
+                    f"No training images found in {DATASET_PATH / 'train'}. "
+                    "Expected layout: <project_root>/data/train/*.jpg and <project_root>/data/valid/*.jpg. "
+                    "Download: wget https://utexas.box.com/shared/static/qubjm5isldqvyimfj9rsmbnvnbezwcv4.zip -O supertux_data.zip && unzip supertux_data.zip "
+                    "then ensure the extracted folder has train/ and valid/ with .jpg files, and is named 'data' or symlinked at <project_root>/data."
+                )
             return torch.utils.data.DataLoader(dataset, batch_size=batch_size, num_workers=4, shuffle=True)
 
         def val_dataloader(self):
+            from .data import DATASET_PATH
+
             dataset = ImageDataset("valid")
+            if len(dataset) == 0:
+                raise FileNotFoundError(
+                    f"No validation images found in {DATASET_PATH / 'valid'}. "
+                    "Expected layout: <project_root>/data/train/*.jpg and <project_root>/data/valid/*.jpg. "
+                    "Download: wget https://utexas.box.com/shared/static/qubjm5isldqvyimfj9rsmbnvnbezwcv4.zip -O supertux_data.zip && unzip supertux_data.zip "
+                    "then ensure the extracted folder has train/ and valid/ with .jpg files, and is named 'data' or symlinked at <project_root>/data."
+                )
             return torch.utils.data.DataLoader(dataset, batch_size=4096, num_workers=4, shuffle=True)
 
     class AutoregressiveTrainer(L.LightningModule):
