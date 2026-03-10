@@ -10,6 +10,42 @@ from .autoregressive import Autoregressive
 from .bsq import Tokenizer
 
 
+def _pack_tokens_10bit(tokens: np.ndarray) -> bytes:
+    """Pack token indices (0..1023) into 10 bits each. Returns bytes."""
+    flat = tokens.ravel().astype(np.uint32)
+    n = len(flat)
+    n_bits = n * 10
+    n_bytes = (n_bits + 7) // 8
+    out = bytearray(n_bytes)
+    for i in range(n):
+        val = int(flat[i])
+        bit_off = i * 10
+        byte_off = bit_off // 8
+        shift = bit_off % 8
+        out[byte_off] |= (val << shift) & 0xFF
+        if shift > 0 and byte_off + 1 < n_bytes:
+            out[byte_off + 1] |= (val >> (8 - shift)) & 0xFF
+        if shift >= 6 and byte_off + 2 < n_bytes:
+            out[byte_off + 2] |= (val >> (16 - shift)) & 0xFF
+    return bytes(out)
+
+
+def _unpack_tokens_10bit(raw: bytes, n_tokens: int) -> np.ndarray:
+    """Unpack n_tokens 10-bit values from bytes."""
+    out = np.zeros(n_tokens, dtype=np.int64)
+    for i in range(n_tokens):
+        bit_off = i * 10
+        byte_off = bit_off // 8
+        shift = bit_off % 8
+        v = raw[byte_off]
+        if byte_off + 1 < len(raw):
+            v |= raw[byte_off + 1] << 8
+        if byte_off + 2 < len(raw):
+            v |= raw[byte_off + 2] << 16
+        out[i] = (v >> shift) & 0x3FF
+    return out
+
+
 class Compressor:
     def __init__(self, tokenizer: Tokenizer, autoregressive: Autoregressive):
         super().__init__()
@@ -19,10 +55,7 @@ class Compressor:
     def compress(self, x: torch.Tensor) -> bytes:
         """
         Compress the image into a bytes stream.
-
-        For this assignment, we serialize the tokenizer indices as 16-bit
-        integers and then apply a generic lossless compressor (zlib) to
-        reduce the storage size.
+        Tokens are packed at 10 bits each (matching codebook_bits) then zlib-compressed.
         """
         # x is expected in range [-0.5, 0.5] with shape (H, W, 3)
         if x.dim() == 3:
@@ -34,19 +67,14 @@ class Compressor:
         # Encode image into discrete tokens of shape (1, h, w)
         tokens = self.tokenizer.encode_index(x)  # (1, h, w)
 
-        # We know tokens are < 2**codebook_bits (<= 1024), so uint16 is sufficient.
-        tokens_np = tokens.detach().cpu().numpy().astype(np.uint16)
-        raw_bytes = tokens_np.tobytes()
-        # Apply lossless compression
-        return zlib.compress(raw_bytes)
+        tokens_np = tokens.detach().cpu().numpy().astype(np.uint32)
+        raw_packed = _pack_tokens_10bit(tokens_np)
+        return zlib.compress(raw_packed, level=9)
 
     def decompress(self, x: bytes) -> torch.Tensor:
         """
         Decompress a bytes stream back into a normalized image tensor.
-
-        Returns:
-            Tensor of shape (H, W, 3) in the same range as the original
-            input to `compress` (approximately [-0.5, 0.5]).
+        Returns tensor of shape (H, W, 3) in range ~[-0.5, 0.5].
         """
         device = next(self.tokenizer.parameters()).device
 
@@ -54,15 +82,13 @@ class Compressor:
         dummy = torch.zeros(1, 100, 150, 3, device=device)
         dummy_idx = self.tokenizer.encode_index(dummy)
         _, h, w = dummy_idx.shape
+        n_tokens = h * w
 
-        # Decompress and reconstruct token indices from bytes
-        raw_bytes = zlib.decompress(x)
-        tokens_np = np.frombuffer(raw_bytes, dtype=np.uint16).copy()
-        tokens = torch.from_numpy(tokens_np).to(device).long().view(1, h, w)
+        raw_packed = zlib.decompress(x)
+        tokens_flat = _unpack_tokens_10bit(raw_packed, n_tokens)
+        tokens = torch.from_numpy(tokens_flat.copy()).to(device).long().view(1, h, w)
 
-        # Decode tokens back to an image tensor (1, H, W, 3)
         img = self.tokenizer.decode_index(tokens)
-        # Match the grader expectation: (H, W, 3) float tensor
         return img[0]
 
 
