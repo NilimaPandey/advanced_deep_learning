@@ -105,7 +105,57 @@ class BaseLLM:
                 for r in self.batched_generate(prompts[idx : idx + micro_batch_size], num_return_sequences, temperature)
             ]
 
-        raise NotImplementedError()
+        # Left padding so sequences are aligned on the right (where generation happens)
+        self.tokenizer.padding_side = "left"
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+
+        encoded = self.tokenizer(
+            prompts,
+            padding=True,
+            return_tensors="pt",
+            truncation=True,
+            max_length=512,
+        )
+        input_ids = encoded["input_ids"].to(self.device)
+        attention_mask = encoded["attention_mask"].to(self.device)
+        input_length = input_ids.shape[1]
+
+        gen_kwargs = {
+            "max_new_tokens": 50,
+            "eos_token_id": self.tokenizer.eos_token_id,
+            "pad_token_id": self.tokenizer.pad_token_id,
+        }
+        if temperature > 0:
+            gen_kwargs["do_sample"] = True
+            gen_kwargs["temperature"] = temperature
+        else:
+            gen_kwargs["do_sample"] = False
+        if num_return_sequences is not None:
+            gen_kwargs["num_return_sequences"] = num_return_sequences
+
+        outputs = self.model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            **gen_kwargs,
+        )
+
+        # Decode only the generated tokens (mask out the prompt)
+        if num_return_sequences is not None:
+            # outputs shape: (batch * num_return_sequences, seq_len)
+            generated = outputs[:, input_length:]
+        else:
+            generated = outputs[:, input_length:]
+
+        decoded = self.tokenizer.batch_decode(generated, skip_special_tokens=True)
+
+        if num_return_sequences is not None:
+            # Reshape to list of list: [prompt0_gen0, prompt0_gen1, ..., prompt1_gen0, ...]
+            return [
+                decoded[i * num_return_sequences : (i + 1) * num_return_sequences]
+                for i in range(len(prompts))
+            ]
+        return decoded
 
     def answer(self, *questions) -> list[float]:
         """

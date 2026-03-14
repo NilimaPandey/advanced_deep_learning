@@ -45,11 +45,20 @@ def tokenize(tokenizer, question: str, answer: str):
     return full
 
 
-def format_example(prompt: str, answer: str) -> dict[str, str]:
+def format_example(prompt: str, answer: float) -> dict[str, str]:
     """
     Construct a question / answer pair. Consider rounding the answer to make it easier for the LLM.
     """
-    raise NotImplementedError()
+    ans_float = float(answer)
+    # Round to reasonable precision for the LLM
+    if abs(ans_float) >= 1000 or (abs(ans_float) < 0.01 and ans_float != 0):
+        ans_str = f"{ans_float:.4g}"
+    else:
+        ans_str = f"{round(ans_float, 4)}"
+    return {
+        "question": prompt,
+        "answer": f"<answer>{ans_str}</answer>",
+    }
 
 
 class TokenizedDataset:
@@ -78,8 +87,45 @@ def train_model(
     output_dir: str,
     **kwargs,
 ):
-    raise NotImplementedError()
-    test_model(output_dir)
+    from pathlib import Path
+
+    from peft import LoraConfig, get_peft_model
+    from transformers import Trainer, TrainingArguments
+
+    llm = BaseLLM()
+    lora_config = LoraConfig(
+        r=8,
+        lora_alpha=32,
+        target_modules="all-linear",
+        bias="none",
+        task_type="CAUSAL_LM",
+    )
+    llm.model = get_peft_model(llm.model, lora_config)
+    llm.model.enable_input_require_grads()
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    dataset = Dataset("train")
+    tokenized_dataset = TokenizedDataset(llm.tokenizer, dataset, format_example)
+
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        logging_dir=output_dir,
+        report_to="tensorboard",
+        gradient_checkpointing=True,
+        learning_rate=5e-5,
+        num_train_epochs=3,
+        per_device_train_batch_size=32,
+    )
+
+    trainer = Trainer(
+        model=llm.model,
+        args=training_args,
+        train_dataset=tokenized_dataset,
+    )
+    trainer.train()
+    trainer.save_model(output_dir)
 
 
 def test_model(ckpt_path: str):
