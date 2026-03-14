@@ -2,6 +2,13 @@ from .base_llm import BaseLLM
 from .data import Dataset, benchmark
 
 
+class SFTModel(BaseLLM):
+    """BaseLLM with SFT adapter; uses trailing space on prompt to match training."""
+
+    def format_prompt(self, question: str) -> str:
+        return f"{question} "
+
+
 def load() -> BaseLLM:
     from pathlib import Path
 
@@ -10,7 +17,7 @@ def load() -> BaseLLM:
     model_name = "sft_model"
     model_path = Path(__file__).parent / model_name
 
-    llm = BaseLLM()
+    llm = SFTModel()
     llm.model = PeftModel.from_pretrained(llm.model, model_path).to(llm.device)
     llm.model.eval()
 
@@ -25,14 +32,16 @@ def tokenize(tokenizer, question: str, answer: str):
     `labels[i] == -100` for the question or masked out parts, since we only want to supervise
     the answer.
     """
-    full_text = f"{question} {answer}{tokenizer.eos_token}"
+    # Use "question " (with space) as prompt so boundary matches inference
+    prompt_text = f"{question} "
+    full_text = f"{prompt_text}{answer}{tokenizer.eos_token}"
 
     tokenizer.padding_side = "right"
     tokenizer.pad_token = tokenizer.eos_token
     full = tokenizer(full_text, padding="max_length", truncation=True, max_length=128)
 
     input_ids = full["input_ids"]
-    question_len = len(tokenizer(question)["input_ids"])
+    question_len = len(tokenizer(prompt_text)["input_ids"])
 
     # Create labels: mask out the prompt part
     labels = [-100] * question_len + input_ids[question_len:]
@@ -114,8 +123,8 @@ def train_model(
         logging_dir=output_dir,
         report_to="tensorboard",
         gradient_checkpointing=True,
-        learning_rate=5e-5,
-        num_train_epochs=3,
+        learning_rate=8e-5,
+        num_train_epochs=5,
         per_device_train_batch_size=32,
     )
 
