@@ -3,7 +3,7 @@ from .data import Dataset, benchmark
 
 
 class SFTModel(BaseLLM):
-    """BaseLLM with SFT adapter; uses trailing space on prompt to match training."""
+    """BaseLLM that appends a trailing space to match what was used during training."""
 
     def format_prompt(self, question: str) -> str:
         return f"{question} "
@@ -20,66 +20,55 @@ def load() -> BaseLLM:
     llm = SFTModel()
     llm.model = PeftModel.from_pretrained(llm.model, model_path).to(llm.device)
     llm.model.eval()
-    # Merged weights often generate more reliably than active LoRA adapters at inference
-    if hasattr(llm.model, "merge_and_unload"):
-        llm.model = llm.model.merge_and_unload()
 
     return llm
 
 
-# Long enough for long questions + CoT + <answer>...</answer>; avoid truncating away the answer
-MAX_SEQ_LEN = 512
+MAX_SEQ_LEN = 128
 
 
 def tokenize(tokenizer, question: str, answer: str):
     """
     Tokenize a data element.
-    We first append the <EOS> token to the question / answer pair.
-    Then we tokenize and construct the ground truth `labels`.
-    `labels[i] == -100` for the question or masked out parts, since we only want to supervise
-    the answer.
+    We tokenize prompt and answer SEPARATELY then concatenate, avoiding BPE
+    boundary issues where the tokenizer merges the space between question and
+    answer into a different token depending on context.
     """
-    # Use "question " (with space) as prompt so boundary matches inference
-    prompt_text = f"{question} "
-    full_text = f"{prompt_text}{answer}{tokenizer.eos_token}"
-
-    tokenizer.padding_side = "right"
     tokenizer.pad_token = tokenizer.eos_token
-    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=MAX_SEQ_LEN)
+    pad_id = tokenizer.eos_token_id
 
-    input_ids = full["input_ids"]
-    prompt_ids = tokenizer(prompt_text, add_special_tokens=True, truncation=False)["input_ids"]
-    # After truncation, only count prompt tokens that still appear as a prefix of input_ids
-    question_len = 0
-    for i, tid in enumerate(prompt_ids):
-        if i >= len(input_ids) or input_ids[i] != tid:
-            break
-        question_len = i + 1
-    # Fallback if tokenizer produced mismatch (should be rare)
-    if question_len == 0:
-        question_len = min(len(prompt_ids), len(input_ids))
+    prompt = f"{question} "
 
-    # Create labels: mask out the prompt part
-    labels = [-100] * question_len + input_ids[question_len:]
+    # Tokenize each part independently so token IDs match inference exactly
+    prompt_ids = tokenizer(prompt, add_special_tokens=True)["input_ids"]
+    answer_ids = tokenizer(answer, add_special_tokens=False)["input_ids"]
 
+    # Concatenate: [BOS? + prompt_tokens + answer_tokens + EOS]
+    input_ids = (prompt_ids + answer_ids + [tokenizer.eos_token_id])[:MAX_SEQ_LEN]
+
+    seq_len = len(input_ids)
+    attention_mask = [1] * seq_len + [0] * (MAX_SEQ_LEN - seq_len)
+    input_ids = input_ids + [pad_id] * (MAX_SEQ_LEN - seq_len)
+
+    prompt_len = min(len(prompt_ids), MAX_SEQ_LEN)
+    labels = [-100] * prompt_len + input_ids[prompt_len:]
     for i in range(len(labels)):
-        if full["attention_mask"][i] == 0:
+        if attention_mask[i] == 0:
             labels[i] = -100
 
-    full["labels"] = labels
-    return full
+    return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
 
 
 def format_example(prompt: str, answer: float) -> dict[str, str]:
     """
-    Construct a question / answer pair. Consider rounding the answer to make it easier for the LLM.
+    Construct a question / answer pair. Round the answer to make it easier for the LLM.
     """
     ans_float = float(answer)
-    # Round to reasonable precision for the LLM
-    if abs(ans_float) >= 1000 or (abs(ans_float) < 0.01 and ans_float != 0):
-        ans_str = f"{ans_float:.4g}"
+    ans_rounded = round(ans_float, 2)
+    if ans_rounded == int(ans_rounded):
+        ans_str = str(int(ans_rounded))
     else:
-        ans_str = f"{round(ans_float, 4)}"
+        ans_str = f"{ans_rounded}"
     return {
         "question": prompt,
         "answer": f"<answer>{ans_str}</answer>",
@@ -87,15 +76,7 @@ def format_example(prompt: str, answer: float) -> dict[str, str]:
 
 
 class TokenizedDataset:
-    def __init__(self, tokenizer, data: Dataset, format_fn):
-        """
-        Use the
-        - BaseLLM.tokenizer
-        - Dataset
-        - format_fn which converts a data element into a dict with entries
-          - question: str
-          - answer: str
-        """
+    def __init__(self, tokenizer, data, format_fn):
         self.format_fn = format_fn
         self.tokenizer = tokenizer
         self.data = data
@@ -128,8 +109,7 @@ def train_model(
     llm.model = get_peft_model(llm.model, lora_config)
     llm.model.enable_input_require_grads()
 
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     dataset = Dataset("train")
     tokenized_dataset = TokenizedDataset(llm.tokenizer, dataset, format_example)
@@ -139,9 +119,10 @@ def train_model(
         logging_dir=output_dir,
         report_to="tensorboard",
         gradient_checkpointing=True,
-        learning_rate=8e-5,
+        learning_rate=1e-4,
         num_train_epochs=5,
         per_device_train_batch_size=32,
+        save_strategy="no",
     )
 
     trainer = Trainer(
@@ -151,19 +132,17 @@ def train_model(
     )
     trainer.train()
     trainer.save_model(output_dir)
+    test_model(output_dir)
 
 
 def test_model(ckpt_path: str):
     testset = Dataset("valid")
     llm = SFTModel()
 
-    # Load the model with LoRA adapters
     from peft import PeftModel
 
     llm.model = PeftModel.from_pretrained(llm.model, ckpt_path).to(llm.device)
     llm.model.eval()
-    if hasattr(llm.model, "merge_and_unload"):
-        llm.model = llm.model.merge_and_unload()
 
     benchmark_result = benchmark(llm, testset, 100)
     print(f"{benchmark_result.accuracy=}  {benchmark_result.answer_rate=}")

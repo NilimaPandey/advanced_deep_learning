@@ -17,8 +17,6 @@ def load() -> BaseLLM:
     llm = RFTModel()
     llm.model = PeftModel.from_pretrained(llm.model, model_path).to(llm.device)
     llm.model.eval()
-    if hasattr(llm.model, "merge_and_unload"):
-        llm.model = llm.model.merge_and_unload()
 
     return llm
 
@@ -64,9 +62,10 @@ def train_model(
         logging_dir=output_dir,
         report_to="tensorboard",
         gradient_checkpointing=True,
-        learning_rate=8e-5,
+        learning_rate=1e-4,
         num_train_epochs=5,
         per_device_train_batch_size=32,
+        save_strategy="no",
     )
     trainer = Trainer(
         model=llm.model,
