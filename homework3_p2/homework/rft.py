@@ -1,5 +1,9 @@
 from .base_llm import BaseLLM
-from .sft import test_model
+from .sft import SFTModel, test_model
+
+
+class RFTModel(SFTModel):
+    """Same prompt format as SFT/RFT training: question + trailing space."""
 
 
 def load() -> BaseLLM:
@@ -10,9 +14,11 @@ def load() -> BaseLLM:
     model_name = "rft_model"
     model_path = Path(__file__).parent / model_name
 
-    llm = BaseLLM()
+    llm = RFTModel()
     llm.model = PeftModel.from_pretrained(llm.model, model_path).to(llm.device)
     llm.model.eval()
+    if hasattr(llm.model, "merge_and_unload"):
+        llm.model = llm.model.merge_and_unload()
 
     return llm
 
@@ -58,8 +64,8 @@ def train_model(
         logging_dir=output_dir,
         report_to="tensorboard",
         gradient_checkpointing=True,
-        learning_rate=5e-5,
-        num_train_epochs=3,
+        learning_rate=8e-5,
+        num_train_epochs=5,
         per_device_train_batch_size=32,
     )
     trainer = Trainer(

@@ -28,7 +28,9 @@ class BaseLLM:
         This function is somewhat robust to output errors (e.g. missing </answer> tags).
         """
         try:
-            return float(answer.split("<answer>")[1].split("</answer>")[0])
+            inner = answer.split("<answer>", 1)[1]
+            inner = inner.split("</answer>", 1)[0].strip()
+            return float(inner)
         except (IndexError, ValueError):
             return float("nan")
 
@@ -122,7 +124,8 @@ class BaseLLM:
         input_length = input_ids.shape[1]
 
         gen_kwargs = {
-            "max_new_tokens": 50,
+            # SFT needs short completions; RFT / CoT need room for reasoning + <answer>...</answer>
+            "max_new_tokens": 256,
             "eos_token_id": self.tokenizer.eos_token_id,
             "pad_token_id": self.tokenizer.pad_token_id,
         }

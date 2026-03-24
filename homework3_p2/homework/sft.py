@@ -20,8 +20,15 @@ def load() -> BaseLLM:
     llm = SFTModel()
     llm.model = PeftModel.from_pretrained(llm.model, model_path).to(llm.device)
     llm.model.eval()
+    # Merged weights often generate more reliably than active LoRA adapters at inference
+    if hasattr(llm.model, "merge_and_unload"):
+        llm.model = llm.model.merge_and_unload()
 
     return llm
+
+
+# Long enough for long questions + CoT + <answer>...</answer>; avoid truncating away the answer
+MAX_SEQ_LEN = 512
 
 
 def tokenize(tokenizer, question: str, answer: str):
@@ -38,10 +45,19 @@ def tokenize(tokenizer, question: str, answer: str):
 
     tokenizer.padding_side = "right"
     tokenizer.pad_token = tokenizer.eos_token
-    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=128)
+    full = tokenizer(full_text, padding="max_length", truncation=True, max_length=MAX_SEQ_LEN)
 
     input_ids = full["input_ids"]
-    question_len = len(tokenizer(prompt_text)["input_ids"])
+    prompt_ids = tokenizer(prompt_text, add_special_tokens=True, truncation=False)["input_ids"]
+    # After truncation, only count prompt tokens that still appear as a prefix of input_ids
+    question_len = 0
+    for i, tid in enumerate(prompt_ids):
+        if i >= len(input_ids) or input_ids[i] != tid:
+            break
+        question_len = i + 1
+    # Fallback if tokenizer produced mismatch (should be rare)
+    if question_len == 0:
+        question_len = min(len(prompt_ids), len(input_ids))
 
     # Create labels: mask out the prompt part
     labels = [-100] * question_len + input_ids[question_len:]
@@ -139,12 +155,15 @@ def train_model(
 
 def test_model(ckpt_path: str):
     testset = Dataset("valid")
-    llm = BaseLLM()
+    llm = SFTModel()
 
     # Load the model with LoRA adapters
     from peft import PeftModel
 
     llm.model = PeftModel.from_pretrained(llm.model, ckpt_path).to(llm.device)
+    llm.model.eval()
+    if hasattr(llm.model, "merge_and_unload"):
+        llm.model = llm.model.merge_and_unload()
 
     benchmark_result = benchmark(llm, testset, 100)
     print(f"{benchmark_result.accuracy=}  {benchmark_result.answer_rate=}")
