@@ -100,8 +100,8 @@ def train_model(
 
     llm = BaseLLM()
     lora_config = LoraConfig(
-        r=8,
-        lora_alpha=32,
+        r=16,
+        lora_alpha=64,
         target_modules="all-linear",
         bias="none",
         task_type="CAUSAL_LM",
@@ -119,9 +119,10 @@ def train_model(
         logging_dir=output_dir,
         report_to="tensorboard",
         gradient_checkpointing=True,
-        learning_rate=1e-4,
-        num_train_epochs=5,
+        learning_rate=2e-4,
+        num_train_epochs=10,
         per_device_train_batch_size=32,
+        warmup_ratio=0.1,
         save_strategy="no",
     )
 
