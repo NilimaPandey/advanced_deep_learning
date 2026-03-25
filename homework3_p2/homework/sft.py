@@ -24,10 +24,7 @@ def load() -> BaseLLM:
     return llm
 
 
-MAX_SEQ_LEN = 128
-
-
-def tokenize(tokenizer, question: str, answer: str):
+def tokenize(tokenizer, question: str, answer: str, max_seq_len: int = 128):
     """
     Tokenize a data element.
     We tokenize prompt and answer SEPARATELY then concatenate, avoiding BPE
@@ -44,13 +41,13 @@ def tokenize(tokenizer, question: str, answer: str):
     answer_ids = tokenizer(answer, add_special_tokens=False)["input_ids"]
 
     # Concatenate: [BOS? + prompt_tokens + answer_tokens + EOS]
-    input_ids = (prompt_ids + answer_ids + [tokenizer.eos_token_id])[:MAX_SEQ_LEN]
+    input_ids = (prompt_ids + answer_ids + [tokenizer.eos_token_id])[:max_seq_len]
 
     seq_len = len(input_ids)
-    attention_mask = [1] * seq_len + [0] * (MAX_SEQ_LEN - seq_len)
-    input_ids = input_ids + [pad_id] * (MAX_SEQ_LEN - seq_len)
+    attention_mask = [1] * seq_len + [0] * (max_seq_len - seq_len)
+    input_ids = input_ids + [pad_id] * (max_seq_len - seq_len)
 
-    prompt_len = min(len(prompt_ids), MAX_SEQ_LEN)
+    prompt_len = min(len(prompt_ids), max_seq_len)
     labels = [-100] * prompt_len + input_ids[prompt_len:]
     for i in range(len(labels)):
         if attention_mask[i] == 0:
@@ -76,17 +73,18 @@ def format_example(prompt: str, answer: float) -> dict[str, str]:
 
 
 class TokenizedDataset:
-    def __init__(self, tokenizer, data, format_fn):
+    def __init__(self, tokenizer, data, format_fn, max_seq_len: int = 128):
         self.format_fn = format_fn
         self.tokenizer = tokenizer
         self.data = data
+        self.max_seq_len = max_seq_len
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         formated_data = self.format_fn(*self.data[idx])
-        return tokenize(self.tokenizer, **formated_data)
+        return tokenize(self.tokenizer, **formated_data, max_seq_len=self.max_seq_len)
 
 
 def train_model(
