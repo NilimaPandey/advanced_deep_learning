@@ -111,13 +111,14 @@ class CLIP(nn.Module):
         self.log_temperature = nn.Parameter(torch.tensor(float(np.log(1.0 / temperature))))
 
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
+        image = image.to(dtype=self.vision_projection.weight.dtype)
         vis_out = self.vision_encoder(image)
         features = vis_out.last_hidden_state.mean(dim=1)
         features = self.vision_projection(features)
         return nn.functional.normalize(features, dim=-1)
 
     def encode_text(self, input_ids: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
-        text_out = self.text_encoder(input_ids, attention_mask=attention_mask)
+        text_out = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
         hidden_states = text_out.last_hidden_state
         if attention_mask is not None:
             mask = attention_mask.unsqueeze(-1).to(hidden_states.dtype)
