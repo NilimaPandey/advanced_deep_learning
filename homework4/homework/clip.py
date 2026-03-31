@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torchvision as tv
@@ -17,27 +18,13 @@ processor = AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM-256M-Instruct")
 
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
-import logging
 
-debug_logger = logging.getLogger("CLIP_DEBUG")
-debug_logger.setLevel(logging.INFO)
-debug_logger.addHandler(logging.StreamHandler())
-
-class ClipWrapper:
-    def __init__(self, model):
-        self.model = model
-
-
-def load_clip(model_name: str = "clip_model"):
+def load(model_name: str = "clip_model"):
     from pathlib import Path
 
     from peft import PeftModel
 
     model_path = Path(__file__).parent / model_name
-    debug_logger.info("===== load_clip START =====")
-
-    ckpt_dir = Path(__file__).parent / model_name
-    debug_logger.info(f"Looking for checkpoint in: {ckpt_dir}")
 
     vlm = BaseVLM()
     vision_encoder = vlm.model.model.vision_model
@@ -50,7 +37,7 @@ def load_clip(model_name: str = "clip_model"):
     if device == "cuda":
         clip = clip.to(dtype=torch.bfloat16)
 
-    return ClipWrapper(clip)
+    return clip
 
 
 def clip_data_collator(features: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
@@ -116,22 +103,29 @@ class CLIP(nn.Module):
         self.vision_encoder = vision_encoder
         self.text_encoder = text_encoder
 
-        # Hidden dimensions from encoders
-        vision_dim = vision_encoder.config.hidden_size
-        text_dim = text_encoder.config.hidden_size
+        vision_hidden_dim = vision_encoder.config.hidden_size
+        text_hidden_dim = text_encoder.config.hidden_size
 
-        # Projection layers (learnable)
-        self.vision_proj = nn.Linear(vision_dim, proj_dim, bias=False)
-        self.text_proj = nn.Linear(text_dim, proj_dim, bias=False)
-
-        # Trainable temperature parameter
-        self.logit_scale = nn.Parameter(torch.log(torch.tensor(1.0 / temperature)))
+        self.vision_projection = nn.Linear(vision_hidden_dim, proj_dim)
+        self.text_projection = nn.Linear(text_hidden_dim, proj_dim)
+        self.log_temperature = nn.Parameter(torch.tensor(float(np.log(1.0 / temperature))))
 
     def encode_image(self, image: torch.Tensor) -> torch.Tensor:
-        return self.vision_encoder(image)
+        vis_out = self.vision_encoder(image)
+        features = vis_out.last_hidden_state.mean(dim=1)
+        features = self.vision_projection(features)
+        return nn.functional.normalize(features, dim=-1)
 
-    def encode_text(self, text: str) -> torch.Tensor:
-        return self.text_encoder(text)
+    def encode_text(self, input_ids: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
+        text_out = self.text_encoder(input_ids, attention_mask=attention_mask)
+        hidden_states = text_out.last_hidden_state
+        if attention_mask is not None:
+            mask = attention_mask.unsqueeze(-1).to(hidden_states.dtype)
+            features = (hidden_states * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+        else:
+            features = hidden_states.mean(dim=1)
+        features = self.text_projection(features)
+        return nn.functional.normalize(features, dim=-1)
 
     def save_pretrained(self, save_directory: str, **kwargs):
         """Customize save method, save additional parameters"""
@@ -184,32 +178,29 @@ class CLIP(nn.Module):
         self.text_encoder.get_input_embeddings().register_forward_hook(make_inputs_require_grads)
 
     def forward(
-            self,
-            pixel_values: torch.Tensor,
-            input_ids: torch.Tensor,
-            attention_mask: torch.Tensor = None,
-            labels: torch.Tensor = None,
-            **kwargs,
+        self,
+        pixel_values: torch.Tensor,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor = None,
+        labels: torch.Tensor = None,
+        **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-
-        # Encode image — take CLS token of sequence output
-        vision_out = self.vision_encoder(pixel_values)[0][:, 0]
-        vision_feature = self.vision_proj(vision_out)
-        vision_feature = vision_feature / vision_feature.norm(dim=-1, keepdim=True)
-
-        # Encode text — also take CLS token
-        text_out = self.text_encoder(
-            input_ids=input_ids,
-            attention_mask=attention_mask
-        )[0][:, 0]
-        text_feature = self.text_proj(text_out)
-        text_feature = text_feature / text_feature.norm(dim=-1, keepdim=True)
-
-        # Similarity logits
-        logit_scale = self.logit_scale.exp()
-        logits = logit_scale * (vision_feature @ text_feature.T)
-
-        return vision_feature, text_feature, logits
+        """
+        Forward pass for the CLIP model.
+        Args:
+            pixel_values: The pixel values of the image.
+            input_ids: The input ids of the text.
+            attention_mask: The attention mask of the text.
+            labels: The labels for the text features.
+            (NOTE: you don't need to use the variable `labels`, this is just for compatibility with the Trainer class)
+            (Hint: refer to returned values of the __getitem__ method in the CaptionDatasetForTraining class)
+        Returns:
+            Tuple of (vision_features, text_features, logit_scale)
+        """
+        vision_features = self.encode_image(pixel_values)
+        text_features = self.encode_text(input_ids, attention_mask)
+        logit_scale = self.log_temperature.exp()
+        return vision_features, text_features, logit_scale
 
 
 def compute_clip_loss(
@@ -217,19 +208,24 @@ def compute_clip_loss(
     labels: torch.Tensor,
     num_items_in_batch: int | None = None,
 ) -> torch.Tensor:
-
-    image_features, text_features, logits = outputs
+    """
+    Compute the loss for the CLIP model.
+    Args:
+        outputs: A tuple containing the outputs of CLIP.forward().
+        labels: The labels for the text features.
+        (NOTE: you don't need to use the variable `labels`, this is just for compatibility with the Trainer class)
+        num_items_in_batch: The number of items in the batch.
+        (NOTE: you don't need to use the variable `num_items_in_batch`, this is just for compatibility with Trainer)
+    Returns:
+        The loss for the CLIP model.
+    """
+    vision_features, text_features, logit_scale = outputs
+    logits = logit_scale * vision_features @ text_features.T
     batch_size = logits.shape[0]
-
-    # Correct-matching indices
     targets = torch.arange(batch_size, device=logits.device)
-
-    # Symmetric CLIP loss
-    loss_i = nn.functional.cross_entropy(logits, targets)
-    loss_t = nn.functional.cross_entropy(logits.T, targets)
-
-    return (loss_i + loss_t) / 2
-
+    loss_v2t = nn.functional.cross_entropy(logits, targets)
+    loss_t2v = nn.functional.cross_entropy(logits.T, targets)
+    return (loss_v2t + loss_t2v) / 2
 
 
 def get_target_modules_for_lora(model: nn.Module) -> list[str]:
@@ -249,7 +245,7 @@ def get_target_modules_for_lora(model: nn.Module) -> list[str]:
 def train(
     data_dir: Path | None = None,
     output_dir: str = "clip",
-    num_train_epochs: float = 0.5,  # for debugging purpose, increase this once the dry run works
+    num_train_epochs: float = 0.05,  # for debugging purpose, increase this once the dry run works
     per_device_train_batch_size: int = 1024,
     gradient_accumulation_steps: int = 1,
     learning_rate: float = 5e-4,
@@ -257,13 +253,8 @@ def train(
 ):
     vlm = BaseVLM()
 
-    if data_dir is None:
-        data_dir = Path(__file__).parent.parent / "data"
-
     output_dir = Path(__file__).parent / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    print("CLIP loading captions from:", data_dir / "train/")
 
     # Initialize TensorBoard writer
     tensorboard_dir = output_dir / "tensorboard"
@@ -328,8 +319,6 @@ def train(
     # save model
     trainer.save_model(output_dir)
     model.model.save_pretrained(output_dir)
-
-
 
     writer.close()
 
