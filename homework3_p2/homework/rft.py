@@ -81,6 +81,7 @@ def train_model(
         train_dataset=tokenized_dataset,
     )
     trainer.train()
+    llm.model.half()
     trainer.save_model(output_dir)
 
     # Test the model after training

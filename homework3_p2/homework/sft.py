@@ -98,8 +98,8 @@ def train_model(
 
     llm = BaseLLM()
     lora_config = LoraConfig(
-        r=16,
-        lora_alpha=64,
+        r=8,
+        lora_alpha=32,
         target_modules="all-linear",
         bias="none",
         task_type="CAUSAL_LM",
@@ -130,6 +130,7 @@ def train_model(
         train_dataset=tokenized_dataset,
     )
     trainer.train()
+    llm.model.half()
     trainer.save_model(output_dir)
     test_model(output_dir)
 
